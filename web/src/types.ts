@@ -5,7 +5,13 @@ export type Regional = {
   nome: string
   slug: string
   ativo?: number
+  setor?: string
+  origem?: string
+  na_base_atual?: number
+  total_distritais?: number
+  total_consultores?: number
   criado_em?: string
+  atualizado_em?: string | null
 }
 
 export type SessionUser = {
@@ -92,11 +98,27 @@ export type RegionalManager = {
   id: number
   nome: string
   email: string
+  login_rede?: string
+  setor?: string
   regional_id: number
   regional_nome: string
   ativo: number
+  na_base_atual?: number
+  regional_ativa?: number
   credencial_configurada: number
   usuario_mascarado?: string
   credencial_status?: string
   credencial_atualizada_em?: string | null
+}
+
+export type PeopleImport = {
+  id: number
+  nome_arquivo: string
+  nome_planilha?: string
+  total_linhas: number
+  total_regionais: number
+  total_distritais: number
+  total_consultores: number
+  total_ignorados: number
+  criado_em: string
 }
