@@ -1,6 +1,7 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { ChangeEvent, useEffect, useMemo, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { api } from './api'
-import type { Regional, RegionalManager, SessionUser } from './types'
+import type { PeopleImport, Regional, RegionalManager, SessionUser } from './types'
 import './developer.css'
 
 type Props = {
@@ -11,15 +12,110 @@ type Props = {
 type Structure = {
   regionais: Regional[]
   gerentes_regionais: RegionalManager[]
+  importacoes: PeopleImport[]
 }
 
-const emptyStructure: Structure = { regionais: [], gerentes_regionais: [] }
+type PeopleRow = {
+  linha: number
+  setor: string
+  nome: string
+  cargo: string
+  situacao: string
+  email_corporativo: string
+  login_rede: string
+  setor_gd: string
+  nome_gd: string
+  setor_gr: string
+  nome_gr: string
+}
+
+type ImportResponse = {
+  mensagem: string
+  resumo: {
+    linhas_recebidas: number
+    regionais: number
+    distritais: number
+    consultores: number
+    ignorados: number
+  }
+  avisos: string[]
+}
+
+const emptyStructure: Structure = { regionais: [], gerentes_regionais: [], importacoes: [] }
+const normalizeHeader = (value: unknown) => String(value ?? '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim()
+  .toUpperCase()
+
+const requiredHeaders = ['SETOR', 'NOME', 'CARGO', 'SITUACAO', 'E-MAIL', 'REDE', 'SETOR GD', 'NOME GD', 'SETOR GR', 'NOME GR']
+
+function readPeopleFile(file: File): Promise<{ sheetName: string; rows: PeopleRow[] }> {
+  return file.arrayBuffer().then((buffer) => {
+    const workbook = XLSX.read(buffer, { type: 'array', cellDates: false })
+    let selectedName = workbook.SheetNames.find((name) => normalizeHeader(name) === 'MES ATUAL') || ''
+    let matrix: unknown[][] = []
+    let headerIndex = -1
+    let headerMap = new Map<string, number>()
+
+    for (const name of selectedName ? [selectedName] : workbook.SheetNames) {
+      const sheet = workbook.Sheets[name]
+      const candidate = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false }) as unknown[][]
+      const index = candidate.findIndex((row) => {
+        const headers = new Set(row.map(normalizeHeader))
+        return requiredHeaders.every((header) => headers.has(header))
+      })
+      if (index >= 0) {
+        selectedName = name
+        matrix = candidate
+        headerIndex = index
+        headerMap = new Map(candidate[index].map((value, column) => [normalizeHeader(value), column]))
+        break
+      }
+    }
+
+    if (!selectedName || headerIndex < 0) {
+      throw new Error('Não encontrei uma aba com as colunas SETOR, NOME, REDE, SETOR GD, NOME GD, SETOR GR e NOME GR.')
+    }
+
+    const value = (row: unknown[], header: string) => String(row[headerMap.get(header) ?? -1] ?? '').trim()
+    const rows = matrix.slice(headerIndex + 1).map((row, index): PeopleRow => ({
+      linha: headerIndex + index + 2,
+      setor: value(row, 'SETOR'),
+      nome: value(row, 'NOME'),
+      cargo: value(row, 'CARGO'),
+      situacao: value(row, 'SITUACAO'),
+      email_corporativo: value(row, 'E-MAIL'),
+      login_rede: value(row, 'REDE'),
+      setor_gd: value(row, 'SETOR GD'),
+      nome_gd: value(row, 'NOME GD'),
+      setor_gr: value(row, 'SETOR GR'),
+      nome_gr: value(row, 'NOME GR'),
+    })).filter((row) => row.setor || row.nome || row.login_rede)
+
+    return { sheetName: selectedName, rows }
+  })
+}
+
+const formatDate = (value?: string | null) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('pt-BR')
+}
 
 export default function DeveloperPanel({ user, onLogout }: Props) {
   const [structure, setStructure] = useState<Structure>(emptyStructure)
   const [loading, setLoading] = useState(true)
+  const [importing, setImporting] = useState(false)
+  const [changing, setChanging] = useState<number[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [warnings, setWarnings] = useState<string[]>([])
+
+  const managersByRegional = useMemo(
+    () => new Map(structure.gerentes_regionais.map((item) => [Number(item.regional_id), item])),
+    [structure.gerentes_regionais],
+  )
 
   async function load() {
     setLoading(true)
@@ -35,21 +131,56 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
 
   useEffect(() => { void load() }, [])
 
-  async function submit(event: FormEvent<HTMLFormElement>, endpoint: string) {
-    event.preventDefault()
+  async function importFile(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    if (!file) return
+    setImporting(true)
     setMessage('')
     setError('')
-    const form = event.currentTarget
-    const payload = Object.fromEntries(new FormData(form).entries())
+    setWarnings([])
+
     try {
-      await api(endpoint, { method: 'POST', body: JSON.stringify(payload) })
-      form.reset()
-      setMessage('Cadastro salvo com sucesso.')
+      const parsed = await readPeopleFile(file)
+      const result = await api<ImportResponse>('developer/importar-estrutura', {
+        method: 'POST',
+        body: JSON.stringify({
+          nome_arquivo: file.name,
+          nome_planilha: parsed.sheetName,
+          linhas: parsed.rows,
+        }),
+      })
+      setMessage(`${result.mensagem} Importados: ${result.resumo.regionais} Regionais, ${result.resumo.distritais} Distritais e ${result.resumo.consultores} Consultores.`)
+      setWarnings(result.avisos || [])
       await load()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Não foi possível salvar o cadastro.')
+      setError(reason instanceof Error ? reason.message : 'Não foi possível importar a planilha.')
+    } finally {
+      input.value = ''
+      setImporting(false)
     }
   }
+
+  async function toggleRegional(regional: Regional) {
+    const next = Number(regional.ativo || 0) === 1 ? 0 : 1
+    setChanging((current) => [...current, regional.id])
+    setMessage('')
+    setError('')
+    try {
+      const result = await api<{ mensagem: string }>('developer/regionais/ativar', {
+        method: 'POST',
+        body: JSON.stringify({ regional_id: regional.id, ativo: next }),
+      })
+      setMessage(result.mensagem)
+      await load()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Não foi possível alterar a Regional.')
+    } finally {
+      setChanging((current) => current.filter((id) => id !== regional.id))
+    }
+  }
+
+  const activeCount = structure.regionais.filter((item) => Number(item.ativo || 0) === 1).length
 
   return (
     <div className="developer-shell">
@@ -60,50 +191,64 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
 
       <main className="developer-content">
         <section className="developer-hero">
-          <div><span>Configuração inicial</span><h1>Regionais e Gerentes Regionais</h1><p>Cadastre a estrutura principal antes de carregar as bases e ativar as automações.</p></div>
-          <div className="developer-summary"><strong>{structure.regionais.length}</strong><span>Regionais</span><strong>{structure.gerentes_regionais.length}</strong><span>Gerentes Regionais</span></div>
+          <div><span>Fonte oficial da hierarquia</span><h1>Estrutura de Pessoas</h1><p>Importe a planilha atualizada. O sistema cria RGs, GDs, Consultores e seus acessos usando o login EMS e o setor.</p></div>
+          <div className="developer-summary"><strong>{structure.regionais.length}</strong><span>Regionais encontradas</span><strong>{activeCount}</strong><span>Regionais ativas</span></div>
         </section>
 
         {error && <div className="developer-alert error">{error}</div>}
         {message && <div className="developer-alert success">{message}</div>}
+        {!!warnings.length && <details className="developer-warning"><summary>{warnings.length} aviso(s) da importação</summary>{warnings.map((item) => <p key={item}>{item}</p>)}</details>}
 
-        <section className="developer-form-grid">
-          <form className="developer-card" onSubmit={(event) => void submit(event, 'developer/regionais')}>
-            <span className="developer-card-icon">R</span>
-            <h2>Nova Regional</h2>
-            <p>Crie a Regional que receberá Distritais, Consultores e resultados.</p>
-            <label><span>Nome da Regional</span><input name="nome" required placeholder="Ex.: Regional Norte" /></label>
-            <label><span>Identificador</span><input name="slug" required placeholder="Ex.: norte" /></label>
-            <button>Cadastrar Regional</button>
-          </form>
-
-          <form className="developer-card" onSubmit={(event) => void submit(event, 'developer/gerentes-regionais')}>
-            <span className="developer-card-icon">G</span>
-            <h2>Novo Gerente Regional</h2>
-            <p>O mesmo e-mail e senha serão protegidos para uso na Bússola e Mercado Farma.</p>
-            <label><span>Regional</span><select name="regional_id" required><option value="">Selecione</option>{structure.regionais.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
-            <label><span>Nome completo</span><input name="nome" required minLength={3} /></label>
-            <label><span>E-mail de acesso</span><input name="email" type="email" required /></label>
-            <label><span>Senha</span><input name="senha" type="password" required minLength={8} /></label>
-            <button disabled={!structure.regionais.length}>Criar acesso do RG</button>
-          </form>
+        <section className="developer-import-card">
+          <div className="developer-import-copy">
+            <span className="developer-card-icon">X</span>
+            <div><span className="developer-kicker">Atualização da base</span><h2>Importar Estrutura de Pessoas</h2><p>O sistema procura a aba <strong>Mês Atual</strong> e lê: C/D para Consultor, K para login EMS, M/N para GD e O/P para GR.</p></div>
+          </div>
+          <label className={`developer-file-button ${importing ? 'disabled' : ''}`}>
+            <input type="file" accept=".xlsx,.xls" onChange={(event) => void importFile(event)} disabled={importing} />
+            {importing ? 'Importando e criando acessos…' : 'Selecionar planilha Excel'}
+          </label>
+          <div className="developer-rules">
+            <div><b>Login</b><span>Coluna K: t0034327 ou t0034327@ems.com.br</span></div>
+            <div><b>Senha inicial</b><span>Setor próprio: RG, GD ou Consultor</span></div>
+            <div><b>Visibilidade</b><span>A Regional só aparece após ativar o GR</span></div>
+          </div>
         </section>
 
         <section className="developer-list-card">
-          <div className="developer-list-heading"><div><span>Estrutura cadastrada</span><h2>Gerentes Regionais</h2></div><button onClick={() => void load()} disabled={loading}>{loading ? 'Atualizando…' : 'Atualizar'}</button></div>
+          <div className="developer-list-heading"><div><span>Ativação controlada</span><h2>Gerentes Regionais encontrados</h2></div><button onClick={() => void load()} disabled={loading}>{loading ? 'Atualizando…' : 'Atualizar'}</button></div>
           <div className="developer-table-wrap">
             <table>
-              <thead><tr><th>Regional</th><th>Gerente Regional</th><th>E-mail</th><th>Credencial de extração</th></tr></thead>
+              <thead><tr><th>Regional / setor</th><th>Gerente Regional</th><th>Login EMS</th><th>Equipe</th><th>Extração</th><th>Status</th></tr></thead>
               <tbody>
-                {structure.gerentes_regionais.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.regional_nome}</td>
-                    <td><strong>{item.nome}</strong></td>
-                    <td>{item.email}</td>
-                    <td><span className={item.credencial_configurada ? 'credential-ready' : 'credential-pending'}>{item.credencial_configurada ? `Configurada · ${item.usuario_mascarado || ''}` : 'Pendente'}</span></td>
-                  </tr>
-                ))}
-                {!structure.gerentes_regionais.length && <tr><td colSpan={4} className="developer-empty">Nenhum Gerente Regional cadastrado.</td></tr>}
+                {structure.regionais.map((regional) => {
+                  const manager = managersByRegional.get(regional.id)
+                  const active = Number(regional.ativo || 0) === 1
+                  return (
+                    <tr key={regional.id}>
+                      <td><strong>{regional.nome}</strong><small className="developer-cell-note">Setor {regional.setor || '—'}</small></td>
+                      <td>{manager?.nome || 'GR não localizado'}<small className="developer-cell-note">Senha inicial: {manager?.setor || regional.setor || '—'}</small></td>
+                      <td>{manager?.login_rede || manager?.email || '—'}</td>
+                      <td>{Number(regional.total_distritais || 0)} GD · {Number(regional.total_consultores || 0)} Consultores</td>
+                      <td><span className={manager?.credencial_configurada ? 'credential-ready' : 'credential-pending'}>{manager?.credencial_configurada ? 'Bússola e Mercado Farma prontas' : 'Pendente'}</span></td>
+                      <td><button className={active ? 'regional-disable' : 'regional-enable'} disabled={changing.includes(regional.id) || Number(regional.na_base_atual || 0) !== 1} onClick={() => void toggleRegional(regional)}>{changing.includes(regional.id) ? 'Aguarde…' : active ? 'Desativar GR' : 'Ativar GR'}</button></td>
+                    </tr>
+                  )
+                })}
+                {!structure.regionais.length && <tr><td colSpan={6} className="developer-empty">Importe a planilha Estrutura de Pessoas para cadastrar a hierarquia.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="developer-list-card">
+          <div className="developer-list-heading"><div><span>Histórico</span><h2>Últimas atualizações da base</h2></div></div>
+          <div className="developer-table-wrap">
+            <table className="developer-history-table">
+              <thead><tr><th>Data</th><th>Arquivo / aba</th><th>Linhas</th><th>Regionais</th><th>Distritais</th><th>Consultores</th></tr></thead>
+              <tbody>
+                {structure.importacoes.map((item) => <tr key={item.id}><td>{formatDate(item.criado_em)}</td><td><strong>{item.nome_arquivo}</strong><small className="developer-cell-note">{item.nome_planilha || '—'}</small></td><td>{item.total_linhas}</td><td>{item.total_regionais}</td><td>{item.total_distritais}</td><td>{item.total_consultores}</td></tr>)}
+                {!structure.importacoes.length && <tr><td colSpan={6} className="developer-empty">Nenhuma atualização registrada.</td></tr>}
               </tbody>
             </table>
           </div>
