@@ -1,8 +1,21 @@
 const TOKEN_KEY = 'painel_regional_token'
+const PUBLIC_MODE = true
 
-export const getToken = () => localStorage.getItem(TOKEN_KEY) || ''
-export const setToken = (token: string) => localStorage.setItem(TOKEN_KEY, token)
-export const clearToken = () => localStorage.removeItem(TOKEN_KEY)
+export const getToken = () => PUBLIC_MODE
+  ? 'public-mode'
+  : localStorage.getItem(TOKEN_KEY) || ''
+
+export const setToken = (token: string) => {
+  if (!PUBLIC_MODE) localStorage.setItem(TOKEN_KEY, token)
+}
+
+export const clearToken = () => {
+  if (PUBLIC_MODE) {
+    window.location.reload()
+    return
+  }
+  localStorage.removeItem(TOKEN_KEY)
+}
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
