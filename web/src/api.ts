@@ -27,12 +27,12 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   }
 
   if (!response.ok) {
-    const message = String(
-      payload.erro
-      || payload.detalhe
-      || raw.slice(0, 240)
-      || `Erro HTTP ${response.status}`,
-    )
+    const error = String(payload.erro || '').trim()
+    const detail = String(payload.detalhe || '').trim()
+    const fallback = raw.slice(0, 240) || `Erro HTTP ${response.status}`
+    const message = error && detail && !error.includes(detail)
+      ? `${error} Detalhe: ${detail}`
+      : error || detail || fallback
     throw new Error(message)
   }
 
