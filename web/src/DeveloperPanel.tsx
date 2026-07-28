@@ -49,6 +49,7 @@ const normalizeHeader = (value: unknown) => String(value ?? '')
   .trim()
   .toUpperCase()
 
+const normalizeSearch = (value: unknown) => normalizeHeader(value).replace(/\s+/g, ' ')
 const requiredHeaders = ['SETOR', 'NOME', 'CARGO', 'SITUACAO', 'E-MAIL', 'REDE', 'SETOR GD', 'NOME GD', 'SETOR GR', 'NOME GR']
 
 function readPeopleFile(file: File): Promise<{ sheetName: string; rows: PeopleRow[] }> {
@@ -115,6 +116,7 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [warnings, setWarnings] = useState<string[]>([])
+  const [search, setSearch] = useState('')
 
   const managersByRegional = useMemo(
     () => new Map<number, RegionalManager>(
@@ -122,6 +124,24 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
     ),
     [structure.gerentes_regionais],
   )
+
+  const filteredRegionals = useMemo(() => {
+    const term = normalizeSearch(search)
+    if (!term) return structure.regionais
+
+    return structure.regionais.filter((regional) => {
+      const manager = managersByRegional.get(regional.id)
+      const searchable = normalizeSearch([
+        regional.nome,
+        regional.setor,
+        manager?.nome,
+        manager?.login_rede,
+        manager?.email,
+        Number(regional.ativo || 0) === 1 ? 'ATIVA ATIVADO' : 'INATIVA DESATIVADO',
+      ].filter(Boolean).join(' '))
+      return searchable.includes(term)
+    })
+  }, [managersByRegional, search, structure.regionais])
 
   async function load() {
     setLoading(true)
@@ -252,12 +272,29 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
         </section>
 
         <section className="developer-list-card">
-          <div className="developer-list-heading"><div><span>Ativação controlada</span><h2>Gerentes Regionais encontrados</h2></div><button onClick={() => void load()} disabled={loading}>{loading ? 'Atualizando…' : 'Atualizar'}</button></div>
+          <div className="developer-list-heading">
+            <div><span>Ativação controlada</span><h2>Gerentes Regionais encontrados</h2></div>
+            <button onClick={() => void load()} disabled={loading}>{loading ? 'Atualizando…' : 'Atualizar'}</button>
+          </div>
+
+          <div className="developer-search-bar">
+            <span className="developer-search-icon" aria-hidden="true">⌕</span>
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar por nome, Regional, setor ou login EMS"
+              aria-label="Buscar Gerente Regional"
+            />
+            {search && <button type="button" onClick={() => setSearch('')} aria-label="Limpar busca">Limpar</button>}
+            <small>{filteredRegionals.length} de {structure.regionais.length}</small>
+          </div>
+
           <div className="developer-table-wrap">
             <table>
               <thead><tr><th>Regional / setor</th><th>Gerente Regional</th><th>Login EMS</th><th>Equipe</th><th>Extração</th><th>Status</th></tr></thead>
               <tbody>
-                {structure.regionais.map((regional) => {
+                {filteredRegionals.map((regional) => {
                   const manager = managersByRegional.get(regional.id)
                   const active = Number(regional.ativo || 0) === 1
                   return (
@@ -272,6 +309,7 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
                   )
                 })}
                 {!structure.regionais.length && <tr><td colSpan={6} className="developer-empty">Use a base já carregada para cadastrar a hierarquia.</td></tr>}
+                {!!structure.regionais.length && !filteredRegionals.length && <tr><td colSpan={6} className="developer-empty">Nenhuma Regional encontrada para “{search}”.</td></tr>}
               </tbody>
             </table>
           </div>
