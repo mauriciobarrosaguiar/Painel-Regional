@@ -1,0 +1,18 @@
+/* Temporário: removido quando o login for reativado. */
+.profile-area .text-button {
+  display: none !important;
+}
+
+.admin-grid .admin-card:nth-child(3) {
+  display: none !important;
+}
+
+.admin-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 720px) {
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
