@@ -1,26 +1,7 @@
-import { ungzip } from 'pako'
-import chunk1 from './_data/estrutura-1.js'
-import chunk2 from './_data/estrutura-2.js'
-import chunk3 from './_data/estrutura-3.js'
-import chunk4 from './_data/estrutura-4.js'
+import rows from './_data/estrutura-runtime.js'
 import meta from './_data/estrutura-meta.js'
 import { json, requireDeveloper } from '../_lib/security.js'
 import { onRequestPost as importPeopleStructure } from './importar-estrutura.js'
-
-function decodeBase64(value) {
-  const binary = atob(value)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
-  return bytes
-}
-
-function embeddedRows() {
-  const compressed = decodeBase64(`${chunk1}${chunk2}${chunk3}${chunk4}`)
-  const text = ungzip(compressed, { to: 'string' })
-  const rows = JSON.parse(text)
-  if (!Array.isArray(rows) || !rows.length) throw new Error('A base interna foi aberta, mas não contém pessoas.')
-  return rows
-}
 
 export async function onRequestGet({ request, env }) {
   const { denial } = await requireDeveloper(request, env)
@@ -33,7 +14,10 @@ export async function onRequestPost({ request, env }) {
   if (denial) return denial
 
   try {
-    const rows = embeddedRows()
+    if (!Array.isArray(rows) || !rows.length) {
+      throw new Error('A base interna preparada não contém pessoas.')
+    }
+
     const headers = new Headers(request.headers)
     headers.set('content-type', 'application/json')
     const forwarded = new Request(request.url, {
