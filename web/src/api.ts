@@ -15,7 +15,30 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     headers,
     cache: 'no-store',
   })
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(payload.erro || payload.detalhe || 'Não foi possível concluir a operação.')
+
+  const raw = await response.text()
+  let payload: Record<string, unknown> = {}
+  if (raw) {
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      payload = {}
+    }
+  }
+
+  if (!response.ok) {
+    const message = String(
+      payload.erro
+      || payload.detalhe
+      || raw.slice(0, 240)
+      || `Erro HTTP ${response.status}`,
+    )
+    throw new Error(message)
+  }
+
+  if (!raw) return {} as T
+  if (!Object.keys(payload).length && raw) {
+    throw new Error('O servidor respondeu em formato inválido. Atualize a página e tente novamente.')
+  }
   return payload as T
 }
