@@ -1,4 +1,5 @@
-import { ChangeEvent, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { ChangeEvent } from 'react'
 import * as XLSX from 'xlsx'
 import { api } from './api'
 import type { PeopleImport, Regional, RegionalManager, SessionUser } from './types'
@@ -69,7 +70,9 @@ function readPeopleFile(file: File): Promise<{ sheetName: string; rows: PeopleRo
         selectedName = name
         matrix = candidate
         headerIndex = index
-        headerMap = new Map(candidate[index].map((value, column) => [normalizeHeader(value), column]))
+        headerMap = new Map<string, number>(
+          candidate[index].map((value, column): [string, number] => [normalizeHeader(value), column]),
+        )
         break
       }
     }
@@ -113,7 +116,9 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
   const [warnings, setWarnings] = useState<string[]>([])
 
   const managersByRegional = useMemo(
-    () => new Map(structure.gerentes_regionais.map((item) => [Number(item.regional_id), item])),
+    () => new Map<number, RegionalManager>(
+      structure.gerentes_regionais.map((item): [number, RegionalManager] => [Number(item.regional_id), item]),
+    ),
     [structure.gerentes_regionais],
   )
 
