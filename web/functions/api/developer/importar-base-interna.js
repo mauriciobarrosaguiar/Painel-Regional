@@ -1,3 +1,4 @@
+import { ungzip } from 'pako'
 import chunk1 from './_data/estrutura-1.js'
 import chunk2 from './_data/estrutura-2.js'
 import chunk3 from './_data/estrutura-3.js'
@@ -13,11 +14,12 @@ function decodeBase64(value) {
   return bytes
 }
 
-async function embeddedRows() {
+function embeddedRows() {
   const compressed = decodeBase64(`${chunk1}${chunk2}${chunk3}${chunk4}`)
-  const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'))
-  const text = await new Response(stream).text()
-  return JSON.parse(text)
+  const text = ungzip(compressed, { to: 'string' })
+  const rows = JSON.parse(text)
+  if (!Array.isArray(rows) || !rows.length) throw new Error('A base interna foi aberta, mas não contém pessoas.')
+  return rows
 }
 
 export async function onRequestGet({ request, env }) {
@@ -31,7 +33,7 @@ export async function onRequestPost({ request, env }) {
   if (denial) return denial
 
   try {
-    const rows = await embeddedRows()
+    const rows = embeddedRows()
     const headers = new Headers(request.headers)
     headers.set('content-type', 'application/json')
     const forwarded = new Request(request.url, {
