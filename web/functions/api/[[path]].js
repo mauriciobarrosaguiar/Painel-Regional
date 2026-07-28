@@ -9,21 +9,52 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 const badRequest = (erro) => json({ erro }, 400)
 const unauthorized = (erro = 'Acesso não autorizado.') => json({ erro }, 401)
 const forbidden = (erro = 'Seu perfil não possui permissão para esta operação.') => json({ erro }, 403)
+const toHex = (bytes) => [...bytes].map((item) => item.toString(16).padStart(2, '0')).join('')
+const fromHex = (value) => new Uint8Array(String(value).match(/.{1,2}/g)?.map((item) => Number.parseInt(item, 16)) || [])
 
 async function body(request) {
   try { return await request.json() } catch { return {} }
 }
 
-async function sha256(value) {
-  const data = new TextEncoder().encode(String(value))
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, '0')).join('')
+async function derivePassword(password, salt) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(String(password)),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  )
+  const bits = await crypto.subtle.deriveBits({
+    name: 'PBKDF2',
+    hash: 'SHA-256',
+    salt,
+    iterations: 150000,
+  }, key, 256)
+  return new Uint8Array(bits)
+}
+
+async function hashPassword(password) {
+  const salt = new Uint8Array(16)
+  crypto.getRandomValues(salt)
+  const derived = await derivePassword(password, salt)
+  return `${toHex(salt)}:${toHex(derived)}`
+}
+
+async function verifyPassword(password, stored) {
+  const [saltHex, hashHex] = String(stored || '').split(':')
+  if (!saltHex || !hashHex) return false
+  const actual = await derivePassword(password, fromHex(saltHex))
+  const expected = fromHex(hashHex)
+  if (actual.length !== expected.length) return false
+  let mismatch = 0
+  for (let index = 0; index < actual.length; index += 1) mismatch |= actual[index] ^ expected[index]
+  return mismatch === 0
 }
 
 function token() {
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
-  return [...bytes].map((item) => item.toString(16).padStart(2, '0')).join('')
+  return toHex(bytes)
 }
 
 function normalizePath(params) {
@@ -96,7 +127,7 @@ async function setup(request, env) {
   ).bind(regionalId).first()
   if (Number(existing?.total || 0) > 0) return forbidden('A Regional já possui Gerente Regional cadastrado.')
 
-  const passwordHash = await sha256(senha)
+  const passwordHash = await hashPassword(senha)
   const created = await env.DB.prepare(`
     INSERT INTO usuarios (regional_id, nome, email, senha_hash, perfil, ativo, criado_em)
     VALUES (?, ?, ?, ?, 'RG', 1, datetime('now'))
@@ -115,7 +146,7 @@ async function login(request, env) {
   const user = await env.DB.prepare(`
     SELECT * FROM usuarios WHERE regional_id = ? AND email = ? AND ativo = 1
   `).bind(regionalId, email).first()
-  if (!user || user.senha_hash !== await sha256(senha)) return unauthorized('E-mail ou senha inválidos.')
+  if (!user || !(await verifyPassword(senha, user.senha_hash))) return unauthorized('E-mail ou senha inválidos.')
   const sessionToken = await createSession(env, user.id)
   return json({ token: sessionToken, usuario: publicUser(user) })
 }
@@ -289,10 +320,11 @@ async function createUser(request, env) {
       .bind(districtId, email).first()
     consultantId = consultant?.id || null
   }
+  const passwordHash = await hashPassword(senha)
   await env.DB.prepare(`
     INSERT INTO usuarios (regional_id, distrital_id, consultor_id, nome, email, senha_hash, perfil, ativo, criado_em)
     VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
-  `).bind(user.regional_id, districtId, consultantId, nome, email, await sha256(senha), perfil).run()
+  `).bind(user.regional_id, districtId, consultantId, nome, email, passwordHash, perfil).run()
   return json({ ok: true }, 201)
 }
 
