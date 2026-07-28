@@ -170,6 +170,9 @@ async function logout(request, env) {
 async function hierarchy(request, env) {
   const user = await session(request, env)
   if (!user) return unauthorized()
+  if (user.perfil === 'CONSULTOR' && !user.consultor_id) {
+    return forbidden('Este acesso de Consultor ainda não está vinculado ao cadastro do Consultor.')
+  }
 
   let districtSql = 'SELECT id, nome, codigo, gerente_nome, ativo FROM distritais WHERE regional_id = ? AND ativo = 1'
   const districtParams = [user.regional_id]
@@ -207,6 +210,9 @@ async function dashboard(request, env, url) {
   let consultantId = Number(url.searchParams.get('consultor_id')) || null
   if (user.perfil === 'GD') districtId = user.distrital_id
   if (user.perfil === 'CONSULTOR') {
+    if (!user.consultor_id) {
+      return forbidden('Este acesso de Consultor ainda não está vinculado ao cadastro do Consultor.')
+    }
     districtId = user.distrital_id
     consultantId = user.consultor_id
   }
@@ -318,7 +324,10 @@ async function createUser(request, env) {
   if (perfil === 'CONSULTOR') {
     const consultant = await env.DB.prepare('SELECT id FROM consultores WHERE distrital_id = ? AND lower(email) = ?')
       .bind(districtId, email).first()
-    consultantId = consultant?.id || null
+    if (!consultant) {
+      return badRequest('Cadastre primeiro o Consultor na Distrital usando o mesmo e-mail do acesso.')
+    }
+    consultantId = consultant.id
   }
   const passwordHash = await hashPassword(senha)
   await env.DB.prepare(`
