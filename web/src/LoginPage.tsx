@@ -44,6 +44,7 @@ export default function LoginPage({ developerConfigured, onAuthenticated }: Prop
   }
 
   const firstDeveloperAccess = mode === 'developer' && !developerConfigured
+  const developerMode = mode === 'developer'
 
   return (
     <main className="login-page">
@@ -67,29 +68,39 @@ export default function LoginPage({ developerConfigured, onAuthenticated }: Prop
         </div>
 
         <span className="login-eyebrow">
-          {mode === 'developer' ? 'Administração da plataforma' : 'Acesso Regional'}
+          {developerMode ? 'Administração da plataforma' : 'Acesso Regional'}
         </span>
         <h1>
           {firstDeveloperAccess
             ? 'Crie seu primeiro acesso'
-            : mode === 'developer'
+            : developerMode
               ? 'Entre como desenvolvedor'
               : 'Entre no Painel Regional'}
         </h1>
         <p>
           {firstDeveloperAccess
-            ? 'Este acesso será usado para cadastrar Regionais e Gerentes Regionais.'
-            : mode === 'developer'
+            ? 'Este acesso será usado para importar a Estrutura de Pessoas e ativar os Gerentes Regionais.'
+            : developerMode
               ? 'Use o e-mail e a senha cadastrados no primeiro acesso.'
-              : 'Use o e-mail e a senha fornecidos pelo responsável da sua Regional.'}
+              : 'Use seu login de rede EMS. A senha inicial é o número do seu setor.'}
         </p>
 
         <form onSubmit={submit}>
           {firstDeveloperAccess && (
             <label><span>Nome completo</span><input name="nome" required minLength={3} autoComplete="name" /></label>
           )}
-          <label><span>E-mail</span><input name="email" type="email" required autoFocus autoComplete="username" /></label>
-          <label><span>Senha</span><input name="senha" type="password" required minLength={8} autoComplete={firstDeveloperAccess ? 'new-password' : 'current-password'} /></label>
+          <label>
+            <span>{developerMode ? 'E-mail' : 'Login ou e-mail EMS'}</span>
+            <input
+              name="email"
+              type={developerMode ? 'email' : 'text'}
+              required
+              autoFocus
+              autoComplete="username"
+              placeholder={developerMode ? 'seuemail@dominio.com' : 't0034327 ou t0034327@ems.com.br'}
+            />
+          </label>
+          <label><span>{developerMode ? 'Senha' : 'Senha inicial — setor'}</span><input name="senha" type="password" required minLength={8} autoComplete={firstDeveloperAccess ? 'new-password' : 'current-password'} placeholder={developerMode ? '' : 'Ex.: 18130000'} /></label>
           {error && <div className="login-alert">{error}</div>}
           <button className="login-primary" disabled={loading}>
             {loading
@@ -101,7 +112,7 @@ export default function LoginPage({ developerConfigured, onAuthenticated }: Prop
         </form>
 
         <small>
-          O acesso do Gerente Regional também será protegido e preparado para as extrações da Bússola e Mercado Farma.
+          Os acessos são atualizados pela planilha Estrutura de Pessoas. Regionais desativadas não aparecem e seus usuários não conseguem entrar.
         </small>
       </section>
     </main>
