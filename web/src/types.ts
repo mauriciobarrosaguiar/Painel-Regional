@@ -1,9 +1,11 @@
-export type Perfil = 'RG' | 'GD' | 'CONSULTOR'
+export type Perfil = 'DESENVOLVEDOR' | 'RG' | 'GD' | 'CONSULTOR'
 
 export type Regional = {
   id: number
   nome: string
   slug: string
+  ativo?: number
+  criado_em?: string
 }
 
 export type SessionUser = {
@@ -11,7 +13,7 @@ export type SessionUser = {
   nome: string
   email: string
   perfil: Perfil
-  regional_id: number
+  regional_id?: number | null
   distrital_id?: number | null
   consultor_id?: number | null
 }
@@ -55,10 +57,46 @@ export type Dashboard = {
   atualizado_em: string
 }
 
-export type AutomationItem = {
+export type AutomationCommand = {
+  id: string
+  tipo: string
+  status: string
+  mensagem?: string
+  erro?: string
+  solicitado_em: string
+  iniciado_em?: string | null
+  finalizado_em?: string | null
+}
+
+export type ExtractionItem = {
+  id: string
+  tipo: string
+  status: string
+  total_registros: number
+  mensagem?: string
+  erro?: string
+  iniciado_em?: string | null
+  finalizado_em?: string | null
+  criado_em: string
+}
+
+export type AutomationData = {
+  comandos: AutomationCommand[]
+  extracoes: ExtractionItem[]
+  em_execucao: number
+  credencial_configurada: boolean
+  atualizado_em: string
+}
+
+export type RegionalManager = {
   id: number
   nome: string
-  status: string
-  ultima_execucao?: string | null
-  proxima_execucao?: string | null
+  email: string
+  regional_id: number
+  regional_nome: string
+  ativo: number
+  credencial_configurada: number
+  usuario_mascarado?: string
+  credencial_status?: string
+  credencial_atualizada_em?: string | null
 }
