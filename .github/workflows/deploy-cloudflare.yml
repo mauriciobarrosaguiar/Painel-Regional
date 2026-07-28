@@ -21,6 +21,7 @@ jobs:
     defaults:
       run:
         working-directory: web
+
     steps:
       - name: Baixar código
         uses: actions/checkout@v4
@@ -36,14 +37,76 @@ jobs:
       - name: Validar build
         run: npm run build
 
+      - name: Criar ou localizar banco D1
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npx wrangler d1 list --json > /tmp/d1-list.json
+          DB_ID=$(node <<'NODE'
+          const fs = require('fs')
+          const data = JSON.parse(fs.readFileSync('/tmp/d1-list.json', 'utf8'))
+          const rows = Array.isArray(data) ? data : (data.result || data.databases || [])
+          const row = rows.find((item) =>
+            item.name === 'painel-regional-db' || item.database_name === 'painel-regional-db'
+          )
+          process.stdout.write(row?.uuid || row?.id || row?.database_id || '')
+          NODE
+          )
+
+          if [ -z "$DB_ID" ]; then
+            npx wrangler d1 create painel-regional-db --json > /tmp/d1-create.json
+            DB_ID=$(node <<'NODE'
+          const fs = require('fs')
+          const data = JSON.parse(fs.readFileSync('/tmp/d1-create.json', 'utf8'))
+          const findId = (value) => {
+            if (!value || typeof value !== 'object') return ''
+            if (typeof value.uuid === 'string') return value.uuid
+            if (typeof value.database_id === 'string') return value.database_id
+            if (typeof value.id === 'string' && value.id.includes('-')) return value.id
+            for (const child of Object.values(value)) {
+              const found = findId(child)
+              if (found) return found
+            }
+            return ''
+          }
+          process.stdout.write(findId(data))
+          NODE
+            )
+          fi
+
+          if [ -z "$DB_ID" ] || [ "$DB_ID" = "00000000-0000-0000-0000-000000000000" ]; then
+            echo "Não foi possível obter o ID real do banco D1."
+            exit 1
+          fi
+
+          node - "$DB_ID" <<'NODE'
+          const fs = require('fs')
+          const databaseId = process.argv[2]
+          const path = 'wrangler.jsonc'
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'))
+          config.d1_databases = config.d1_databases || []
+          const current = config.d1_databases.find((item) => item.binding === 'DB')
+          if (current) {
+            current.database_name = 'painel-regional-db'
+            current.database_id = databaseId
+          } else {
+            config.d1_databases.push({
+              binding: 'DB',
+              database_name: 'painel-regional-db',
+              database_id: databaseId,
+            })
+          }
+          fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
+          NODE
+
+          echo "Banco D1 configurado com sucesso."
+
+      - name: Aplicar estrutura do banco D1
+        run: npx wrangler d1 migrations apply DB --remote
+
       - name: Criar projeto Pages quando necessário
         run: npx wrangler pages project create painel-regional --production-branch main || true
 
-      - name: Publicar primeira versão e provisionar bindings
-        run: npx wrangler pages deploy dist --project-name painel-regional --branch main --commit-hash $GITHUB_SHA --experimental-auto-create
-
-      - name: Aplicar estrutura do banco D1
-        run: npx wrangler d1 migrations apply painel-regional-db --remote
-
-      - name: Republicar com banco atualizado
-        run: npx wrangler pages deploy dist --project-name painel-regional --branch main --commit-hash $GITHUB_SHA --experimental-auto-create
+      - name: Publicar Painel Regional
+        run: npx wrangler pages deploy dist --project-name painel-regional --branch main --commit-hash "$GITHUB_SHA" --commit-dirty=true
