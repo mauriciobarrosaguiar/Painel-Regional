@@ -1,6 +1,7 @@
 const encoder = new TextEncoder()
 const PASSWORD_ITERATIONS = 10000
 const PASSWORD_PREFIX = 'pbkdf2-sha256'
+const IMPORT_PASSWORD_PREFIX = 'estrutura-sha256'
 
 export const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
@@ -21,6 +22,10 @@ export async function readBody(request) {
 
 const toHex = (bytes) => [...bytes].map((item) => item.toString(16).padStart(2, '0')).join('')
 const fromHex = (value) => new Uint8Array(String(value).match(/.{1,2}/g)?.map((item) => Number.parseInt(item, 16)) || [])
+
+async function sha256(value) {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(String(value))))
+}
 
 async function derivePassword(password, salt, iterations) {
   const key = await crypto.subtle.importKey(
@@ -45,8 +50,33 @@ export async function hashPassword(password) {
   return `${PASSWORD_PREFIX}$${PASSWORD_ITERATIONS}$${toHex(salt)}$${toHex(derived)}`
 }
 
-export async function verifyPassword(password, stored) {
+export async function hashImportedPassword(password, login, secret) {
+  if (typeof secret !== 'string' || secret.length < 32) {
+    throw new Error('A chave de proteção dos acessos importados ainda não foi configurada.')
+  }
+  const salt = toHex(crypto.getRandomValues(new Uint8Array(16)))
+  const context = String(login || '').trim().toLowerCase()
+  const digest = await sha256(`${IMPORT_PASSWORD_PREFIX}:${secret}:${context}:${String(password)}:${salt}`)
+  return `${IMPORT_PASSWORD_PREFIX}$${salt}$${toHex(digest)}`
+}
+
+export async function verifyPassword(password, stored, secret = '', login = '') {
   const value = String(stored || '')
+
+  if (value.startsWith(`${IMPORT_PASSWORD_PREFIX}$`)) {
+    if (typeof secret !== 'string' || secret.length < 32) return false
+    const parts = value.split('$')
+    const salt = parts[1] || ''
+    const expected = fromHex(parts[2] || '')
+    if (!salt || !expected.length) return false
+    const context = String(login || '').trim().toLowerCase()
+    const actual = await sha256(`${IMPORT_PASSWORD_PREFIX}:${secret}:${context}:${String(password)}:${salt}`)
+    if (actual.length !== expected.length) return false
+    let mismatch = 0
+    for (let index = 0; index < actual.length; index += 1) mismatch |= actual[index] ^ expected[index]
+    return mismatch === 0
+  }
+
   let iterations = PASSWORD_ITERATIONS
   let saltHex = ''
   let hashHex = ''
