@@ -3,12 +3,15 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   headers: {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
   },
 })
 
 const badRequest = (erro) => json({ erro }, 400)
-const unauthorized = (erro = 'Acesso não autorizado.') => json({ erro }, 401)
+const unauthorized = (erro = 'E-mail ou senha inválidos.') => json({ erro }, 401)
 const forbidden = (erro = 'Seu perfil não possui permissão para esta operação.') => json({ erro }, 403)
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
 const toHex = (bytes) => [...bytes].map((item) => item.toString(16).padStart(2, '0')).join('')
 const fromHex = (value) => new Uint8Array(String(value).match(/.{1,2}/g)?.map((item) => Number.parseInt(item, 16)) || [])
 
@@ -17,13 +20,7 @@ async function body(request) {
 }
 
 async function derivePassword(password, salt) {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(String(password)),
-    'PBKDF2',
-    false,
-    ['deriveBits'],
-  )
+  const key = await crypto.subtle.importKey('raw', encoder.encode(String(password)), 'PBKDF2', false, ['deriveBits'])
   const bits = await crypto.subtle.deriveBits({
     name: 'PBKDF2',
     hash: 'SHA-256',
@@ -34,8 +31,7 @@ async function derivePassword(password, salt) {
 }
 
 async function hashPassword(password) {
-  const salt = new Uint8Array(16)
-  crypto.getRandomValues(salt)
+  const salt = crypto.getRandomValues(new Uint8Array(16))
   const derived = await derivePassword(password, salt)
   return `${toHex(salt)}:${toHex(derived)}`
 }
@@ -51,10 +47,31 @@ async function verifyPassword(password, stored) {
   return mismatch === 0
 }
 
+async function encryptionKey(secret) {
+  if (typeof secret !== 'string' || secret.length < 32) {
+    throw new Error('A chave de proteção das credenciais ainda não foi configurada.')
+  }
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(`painel-regional:credenciais:v1:${secret}`))
+  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
+async function encryptCredentials(payload, secret) {
+  const key = await encryptionKey(secret)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const plaintext = encoder.encode(JSON.stringify(payload))
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext))
+  return `v1.${toHex(iv)}.${toHex(encrypted)}`
+}
+
+function maskEmail(email) {
+  const value = String(email || '').trim().toLowerCase()
+  const [name, domain] = value.split('@')
+  if (!domain) return value ? `${value.slice(0, 3)}***` : ''
+  return `${name.slice(0, Math.min(3, name.length))}${'*'.repeat(Math.max(3, name.length - 3))}@${domain}`
+}
+
 function token() {
-  const bytes = new Uint8Array(32)
-  crypto.getRandomValues(bytes)
-  return toHex(bytes)
+  return toHex(crypto.getRandomValues(new Uint8Array(32)))
 }
 
 function normalizePath(params) {
@@ -62,98 +79,155 @@ function normalizePath(params) {
   return Array.isArray(value) ? value.join('/') : String(value || '')
 }
 
-async function session(request, env) {
-  const authorization = request.headers.get('authorization') || ''
-  const sessionToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
-  if (!sessionToken) return null
-  return env.DB.prepare(`
-    SELECT u.id, u.nome, u.email, u.perfil, u.regional_id, u.distrital_id, u.consultor_id,
-           r.nome AS regional_nome, r.slug AS regional_slug
-      FROM sessoes s
-      JOIN usuarios u ON u.id = s.usuario_id
-      JOIN regionais r ON r.id = u.regional_id
-     WHERE s.token = ? AND s.expira_em > datetime('now') AND u.ativo = 1 AND r.ativo = 1
-  `).bind(sessionToken).first()
-}
-
 function publicUser(row) {
   return {
-    id: row.id,
+    id: Number(row.id),
     nome: row.nome,
     email: row.email,
     perfil: row.perfil,
-    regional_id: row.regional_id,
-    distrital_id: row.distrital_id,
-    consultor_id: row.consultor_id,
+    regional_id: row.regional_id == null ? null : Number(row.regional_id),
+    distrital_id: row.distrital_id == null ? null : Number(row.distrital_id),
+    consultor_id: row.consultor_id == null ? null : Number(row.consultor_id),
   }
 }
 
-async function createSession(env, userId) {
+async function createSession(env, type, userId) {
   const value = token()
   await env.DB.prepare(`
-    INSERT INTO sessoes (token, usuario_id, criado_em, expira_em)
-    VALUES (?, ?, datetime('now'), datetime('now', '+7 days'))
-  `).bind(value, userId).run()
+    INSERT INTO sessoes_acesso (token, tipo_usuario, usuario_id, criado_em, expira_em)
+    VALUES (?, ?, ?, datetime('now'), datetime('now', '+7 days'))
+  `).bind(value, type, userId).run()
   return value
 }
 
-async function listRegionais(env) {
-  const { results = [] } = await env.DB.prepare(
-    'SELECT id, nome, slug FROM regionais WHERE ativo = 1 ORDER BY nome'
-  ).all()
-  return json({ regionais: results })
+async function session(request, env) {
+  const authorization = request.headers.get('authorization') || ''
+  const value = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
+  if (!value) return null
+
+  const current = await env.DB.prepare(`
+    SELECT tipo_usuario, usuario_id
+      FROM sessoes_acesso
+     WHERE token = ? AND expira_em > datetime('now')
+  `).bind(value).first()
+  if (!current) return null
+
+  if (current.tipo_usuario === 'DESENVOLVEDOR') {
+    const developer = await env.DB.prepare(`
+      SELECT id, nome, email
+        FROM desenvolvedores
+       WHERE id = ? AND ativo = 1
+    `).bind(current.usuario_id).first()
+    return developer ? { ...developer, perfil: 'DESENVOLVEDOR', tipo_usuario: 'DESENVOLVEDOR' } : null
+  }
+
+  const user = await env.DB.prepare(`
+    SELECT u.id, u.nome, u.email, u.perfil, u.regional_id, u.distrital_id, u.consultor_id,
+           r.nome AS regional_nome, r.slug AS regional_slug
+      FROM usuarios u
+      JOIN regionais r ON r.id = u.regional_id
+     WHERE u.id = ? AND u.ativo = 1 AND r.ativo = 1
+  `).bind(current.usuario_id).first()
+  return user ? { ...user, tipo_usuario: 'USUARIO' } : null
 }
 
-async function setupStatus(url, env) {
-  const regionalId = Number(url.searchParams.get('regional_id'))
-  if (!regionalId) return badRequest('Regional inválida.')
-  const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS total FROM usuarios WHERE regional_id = ? AND perfil = 'RG' AND ativo = 1"
-  ).bind(regionalId).first()
-  return json({ precisa_configurar: Number(row?.total || 0) === 0 })
+async function requireSession(request, env) {
+  return session(request, env)
 }
 
-async function setup(request, env) {
+async function requireDeveloper(request, env) {
+  const user = await requireSession(request, env)
+  if (!user) return { denial: unauthorized('Sessão expirada. Entre novamente.'), user: null }
+  if (user.perfil !== 'DESENVOLVEDOR') return { denial: forbidden(), user }
+  return { denial: null, user }
+}
+
+async function requireRegionalUser(request, env) {
+  const user = await requireSession(request, env)
+  if (!user) return { denial: unauthorized('Sessão expirada. Entre novamente.'), user: null }
+  if (user.perfil === 'DESENVOLVEDOR') return { denial: forbidden('Selecione uma função administrativa do desenvolvedor.'), user }
+  return { denial: null, user }
+}
+
+async function requireRG(request, env) {
+  const result = await requireRegionalUser(request, env)
+  if (result.denial) return result
+  if (result.user.perfil !== 'RG') return { denial: forbidden('Apenas o Gerente Regional pode realizar esta operação.'), user: result.user }
+  return result
+}
+
+async function authStatus(env) {
+  const row = await env.DB.prepare('SELECT COUNT(*) AS total FROM desenvolvedores WHERE ativo = 1').first()
+  return json({ desenvolvedor_configurado: Number(row?.total || 0) > 0 })
+}
+
+async function developerSetup(request, env) {
+  const existing = await env.DB.prepare('SELECT COUNT(*) AS total FROM desenvolvedores WHERE ativo = 1').first()
+  if (Number(existing?.total || 0) > 0) return forbidden('O primeiro acesso do desenvolvedor já foi criado.')
+
   const data = await body(request)
-  const regionalId = Number(data.regional_id)
   const nome = String(data.nome || '').trim()
   const email = String(data.email || '').trim().toLowerCase()
   const senha = String(data.senha || '')
-  if (!regionalId || nome.length < 3 || !email.includes('@') || senha.length < 8) {
+  if (nome.length < 3 || !email.includes('@') || senha.length < 8) {
     return badRequest('Informe nome, e-mail válido e senha com pelo menos 8 caracteres.')
   }
-  const existing = await env.DB.prepare(
-    "SELECT COUNT(*) AS total FROM usuarios WHERE regional_id = ? AND perfil = 'RG' AND ativo = 1"
-  ).bind(regionalId).first()
-  if (Number(existing?.total || 0) > 0) return forbidden('A Regional já possui Gerente Regional cadastrado.')
 
-  const passwordHash = await hashPassword(senha)
   const created = await env.DB.prepare(`
-    INSERT INTO usuarios (regional_id, nome, email, senha_hash, perfil, ativo, criado_em)
-    VALUES (?, ?, ?, ?, 'RG', 1, datetime('now'))
-  `).bind(regionalId, nome, email, passwordHash).run()
-  const user = await env.DB.prepare('SELECT * FROM usuarios WHERE id = ?').bind(created.meta.last_row_id).first()
-  const sessionToken = await createSession(env, user.id)
-  return json({ token: sessionToken, usuario: publicUser(user) }, 201)
+    INSERT INTO desenvolvedores (nome, email, senha_hash, ativo, criado_em)
+    VALUES (?, ?, ?, 1, datetime('now'))
+  `).bind(nome, email, await hashPassword(senha)).run()
+  const id = Number(created.meta.last_row_id)
+  const sessionToken = await createSession(env, 'DESENVOLVEDOR', id)
+  return json({
+    token: sessionToken,
+    usuario: { id, nome, email, perfil: 'DESENVOLVEDOR', regional_id: null, distrital_id: null, consultor_id: null },
+  }, 201)
 }
 
 async function login(request, env) {
   const data = await body(request)
-  const regionalId = Number(data.regional_id)
   const email = String(data.email || '').trim().toLowerCase()
   const senha = String(data.senha || '')
-  if (!regionalId || !email || !senha) return badRequest('Informe Regional, e-mail e senha.')
+  if (!email || !senha) return badRequest('Informe e-mail e senha.')
+
+  const developer = await env.DB.prepare(`
+    SELECT id, nome, email, senha_hash
+      FROM desenvolvedores
+     WHERE lower(email) = ? AND ativo = 1
+  `).bind(email).first()
+  if (developer && await verifyPassword(senha, developer.senha_hash)) {
+    const now = new Date().toISOString()
+    await env.DB.prepare('UPDATE desenvolvedores SET ultimo_acesso_em = ? WHERE id = ?').bind(now, developer.id).run()
+    const sessionToken = await createSession(env, 'DESENVOLVEDOR', developer.id)
+    return json({
+      token: sessionToken,
+      usuario: { id: developer.id, nome: developer.nome, email: developer.email, perfil: 'DESENVOLVEDOR', regional_id: null, distrital_id: null, consultor_id: null },
+    })
+  }
+
   const user = await env.DB.prepare(`
-    SELECT * FROM usuarios WHERE regional_id = ? AND email = ? AND ativo = 1
-  `).bind(regionalId, email).first()
-  if (!user || !(await verifyPassword(senha, user.senha_hash))) return unauthorized('E-mail ou senha inválidos.')
-  const sessionToken = await createSession(env, user.id)
-  return json({ token: sessionToken, usuario: publicUser(user) })
+    SELECT u.*, r.nome AS regional_nome, r.slug AS regional_slug
+      FROM usuarios u
+      JOIN regionais r ON r.id = u.regional_id
+     WHERE lower(u.email) = ? AND u.ativo = 1 AND r.ativo = 1
+     ORDER BY u.id
+     LIMIT 1
+  `).bind(email).first()
+  if (!user || !(await verifyPassword(senha, user.senha_hash))) return unauthorized()
+
+  const sessionToken = await createSession(env, 'USUARIO', user.id)
+  return json({
+    token: sessionToken,
+    usuario: publicUser(user),
+    regional: { id: user.regional_id, nome: user.regional_nome, slug: user.regional_slug },
+  })
 }
 
 async function me(request, env) {
   const user = await session(request, env)
-  if (!user) return unauthorized()
+  if (!user) return unauthorized('Sessão expirada. Entre novamente.')
+  if (user.perfil === 'DESENVOLVEDOR') return json({ usuario: publicUser(user), regional: null })
   return json({
     usuario: publicUser(user),
     regional: { id: user.regional_id, nome: user.regional_nome, slug: user.regional_slug },
@@ -162,17 +236,107 @@ async function me(request, env) {
 
 async function logout(request, env) {
   const authorization = request.headers.get('authorization') || ''
-  const sessionToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
-  if (sessionToken) await env.DB.prepare('DELETE FROM sessoes WHERE token = ?').bind(sessionToken).run()
+  const value = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
+  if (value) await env.DB.prepare('DELETE FROM sessoes_acesso WHERE token = ?').bind(value).run()
   return json({ ok: true })
 }
 
-async function hierarchy(request, env) {
-  const user = await session(request, env)
-  if (!user) return unauthorized()
-  if (user.perfil === 'CONSULTOR' && !user.consultor_id) {
-    return forbidden('Este acesso de Consultor ainda não está vinculado ao cadastro do Consultor.')
+async function developerStructure(request, env) {
+  const { denial } = await requireDeveloper(request, env)
+  if (denial) return denial
+  const [regionals, managers] = await env.DB.batch([
+    env.DB.prepare(`SELECT id, nome, slug, ativo, criado_em FROM regionais ORDER BY nome`),
+    env.DB.prepare(`
+      SELECT u.id, u.nome, u.email, u.regional_id, u.ativo, r.nome AS regional_nome,
+             CASE WHEN c.id IS NULL THEN 0 ELSE 1 END AS credencial_configurada,
+             c.usuario_mascarado, c.status AS credencial_status, c.atualizado_em AS credencial_atualizada_em
+        FROM usuarios u
+        JOIN regionais r ON r.id = u.regional_id
+        LEFT JOIN credenciais_extracao c ON c.usuario_id = u.id AND c.regional_id = u.regional_id
+       WHERE u.perfil = 'RG'
+       ORDER BY r.nome, u.nome
+    `),
+  ])
+  return json({ regionais: regionals.results || [], gerentes_regionais: managers.results || [] })
+}
+
+async function createRegional(request, env) {
+  const { denial } = await requireDeveloper(request, env)
+  if (denial) return denial
+  const data = await body(request)
+  const nome = String(data.nome || '').trim()
+  const slug = String(data.slug || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
+  if (nome.length < 3 || slug.length < 2) return badRequest('Informe o nome e o identificador da Regional.')
+  await env.DB.prepare(`
+    INSERT INTO regionais (nome, slug, ativo, criado_em)
+    VALUES (?, ?, 1, datetime('now'))
+  `).bind(nome, slug).run()
+  return json({ ok: true }, 201)
+}
+
+async function emailInUse(env, email) {
+  const [developers, users] = await env.DB.batch([
+    env.DB.prepare('SELECT id FROM desenvolvedores WHERE lower(email) = ? LIMIT 1').bind(email),
+    env.DB.prepare('SELECT id FROM usuarios WHERE lower(email) = ? LIMIT 1').bind(email),
+  ])
+  return Boolean(developers.results?.length || users.results?.length)
+}
+
+async function createRegionalManager(request, env) {
+  const { denial } = await requireDeveloper(request, env)
+  if (denial) return denial
+  const data = await body(request)
+  const regionalId = Number(data.regional_id)
+  const nome = String(data.nome || '').trim()
+  const email = String(data.email || '').trim().toLowerCase()
+  const senha = String(data.senha || '')
+  if (!regionalId || nome.length < 3 || !email.includes('@') || senha.length < 8) {
+    return badRequest('Informe Regional, nome, e-mail e senha com pelo menos 8 caracteres.')
   }
+  const regional = await env.DB.prepare('SELECT id FROM regionais WHERE id = ? AND ativo = 1').bind(regionalId).first()
+  if (!regional) return badRequest('Regional inválida.')
+  if (await emailInUse(env, email)) return json({ erro: 'Este e-mail já possui acesso cadastrado.' }, 409)
+
+  const passwordHash = await hashPassword(senha)
+  const encrypted = await encryptCredentials({
+    usuario: email,
+    segredo: senha,
+    regional_id: regionalId,
+    salvo_em: new Date().toISOString(),
+  }, env.PAINEL_REGIONAL_KEY)
+
+  const created = await env.DB.prepare(`
+    INSERT INTO usuarios (regional_id, nome, email, senha_hash, perfil, ativo, criado_em)
+    VALUES (?, ?, ?, ?, 'RG', 1, datetime('now'))
+  `).bind(regionalId, nome, email, passwordHash).run()
+  const userId = Number(created.meta.last_row_id)
+  const now = new Date().toISOString()
+  await env.DB.prepare(`
+    INSERT INTO credenciais_extracao
+      (regional_id, usuario_id, usuario_mascarado, credencial_cifrada, status, mensagem_status, atualizado_em)
+    VALUES (?, ?, ?, ?, 'CONFIGURADA', ?, ?)
+    ON CONFLICT(regional_id) DO UPDATE SET
+      usuario_id = excluded.usuario_id,
+      usuario_mascarado = excluded.usuario_mascarado,
+      credencial_cifrada = excluded.credencial_cifrada,
+      status = 'CONFIGURADA',
+      mensagem_status = excluded.mensagem_status,
+      atualizado_em = excluded.atualizado_em
+  `).bind(
+    regionalId,
+    userId,
+    maskEmail(email),
+    encrypted,
+    'Credencial do Gerente Regional preparada para Bússola e Mercado Farma.',
+    now,
+  ).run()
+  return json({ ok: true, usuario_id: userId }, 201)
+}
+
+async function hierarchy(request, env) {
+  const { denial, user } = await requireRegionalUser(request, env)
+  if (denial) return denial
+  if (user.perfil === 'CONSULTOR' && !user.consultor_id) return forbidden('Este Consultor ainda não está vinculado ao cadastro da equipe.')
 
   let districtSql = 'SELECT id, nome, codigo, gerente_nome, ativo FROM distritais WHERE regional_id = ? AND ativo = 1'
   const districtParams = [user.regional_id]
@@ -203,16 +367,14 @@ async function hierarchy(request, env) {
 }
 
 async function dashboard(request, env, url) {
-  const user = await session(request, env)
-  if (!user) return unauthorized()
+  const { denial, user } = await requireRegionalUser(request, env)
+  if (denial) return denial
 
   let districtId = Number(url.searchParams.get('distrital_id')) || null
   let consultantId = Number(url.searchParams.get('consultor_id')) || null
   if (user.perfil === 'GD') districtId = user.distrital_id
   if (user.perfil === 'CONSULTOR') {
-    if (!user.consultor_id) {
-      return forbidden('Este acesso de Consultor ainda não está vinculado ao cadastro do Consultor.')
-    }
+    if (!user.consultor_id) return forbidden('Este Consultor ainda não está vinculado ao cadastro da equipe.')
     districtId = user.distrital_id
     consultantId = user.consultor_id
   }
@@ -241,35 +403,91 @@ async function dashboard(request, env, url) {
     WHERE ${where.join(' AND ')}
   `).bind(...params).first()
 
-  let escopo = 'Resultado Regional'
+  let scope = 'Resultado Regional'
   if (districtId) {
-    const district = await env.DB.prepare('SELECT nome FROM distritais WHERE id = ? AND regional_id = ?')
-      .bind(districtId, user.regional_id).first()
-    escopo = district?.nome || 'Resultado Distrital'
+    const district = await env.DB.prepare('SELECT nome FROM distritais WHERE id = ? AND regional_id = ?').bind(districtId, user.regional_id).first()
+    scope = district?.nome || 'Resultado Distrital'
   }
   if (consultantId) {
-    const consultant = await env.DB.prepare('SELECT nome FROM consultores WHERE id = ?')
-      .bind(consultantId).first()
-    escopo = consultant?.nome || 'Resultado do Consultor'
+    const consultant = await env.DB.prepare('SELECT nome FROM consultores WHERE id = ?').bind(consultantId).first()
+    scope = consultant?.nome || 'Resultado do Consultor'
   }
-  return json({ escopo, ...row, atualizado_em: row?.atualizado_em || '' })
+  return json({ escopo: scope, ...row, atualizado_em: row?.atualizado_em || '' })
+}
+
+async function integrationStatus(request, env) {
+  const { denial, user } = await requireRG(request, env)
+  if (denial) return denial
+  const current = await env.DB.prepare(`
+    SELECT usuario_mascarado, status, mensagem_status, testado_em, atualizado_em
+      FROM credenciais_extracao
+     WHERE regional_id = ? AND usuario_id = ?
+  `).bind(user.regional_id, user.id).first()
+  return json({
+    configurada: Boolean(current),
+    usuario_mascarado: current?.usuario_mascarado || maskEmail(user.email),
+    status: current?.status || 'NAO_CONFIGURADA',
+    mensagem: current?.mensagem_status || 'A credencial de extração ainda não foi preparada.',
+    testado_em: current?.testado_em || null,
+    atualizado_em: current?.atualizado_em || null,
+  })
 }
 
 async function automations(request, env) {
-  const user = await session(request, env)
-  if (!user) return unauthorized()
-  if (user.perfil !== 'RG') return forbidden()
-  const { results = [] } = await env.DB.prepare(`
-    SELECT id, nome, status, ultima_execucao, proxima_execucao
-      FROM automacoes WHERE regional_id = ? ORDER BY nome
-  `).bind(user.regional_id).all()
-  return json({ automacoes: results })
+  const { denial, user } = await requireRG(request, env)
+  if (denial) return denial
+  const [commands, extractions, credential] = await env.DB.batch([
+    env.DB.prepare(`
+      SELECT id, tipo, status, mensagem, erro, solicitado_em, iniciado_em, finalizado_em
+        FROM comandos_automacao
+       WHERE regional_id = ?
+       ORDER BY solicitado_em DESC LIMIT 30
+    `).bind(user.regional_id),
+    env.DB.prepare(`
+      SELECT id, tipo, status, total_registros, mensagem, erro, iniciado_em, finalizado_em, criado_em
+        FROM extracoes
+       WHERE regional_id = ?
+       ORDER BY criado_em DESC LIMIT 30
+    `).bind(user.regional_id),
+    env.DB.prepare('SELECT id, status FROM credenciais_extracao WHERE regional_id = ? AND usuario_id = ?').bind(user.regional_id, user.id),
+  ])
+  const active = (commands.results || []).filter((item) => ['aguardando', 'executando'].includes(String(item.status).toLowerCase())).length
+  return json({
+    comandos: commands.results || [],
+    extracoes: extractions.results || [],
+    em_execucao: active,
+    credencial_configurada: Boolean(credential.results?.length),
+    atualizado_em: new Date().toISOString(),
+  })
+}
+
+async function requestAutomation(request, env) {
+  const { denial, user } = await requireRG(request, env)
+  if (denial) return denial
+  const data = await body(request)
+  const type = String(data.tipo || '').trim().toUpperCase()
+  if (!['BUSSOLA', 'MERCADO_FARMA'].includes(type)) return badRequest('Tipo de automação inválido.')
+  const credential = await env.DB.prepare('SELECT id FROM credenciais_extracao WHERE regional_id = ? AND usuario_id = ?').bind(user.regional_id, user.id).first()
+  if (!credential) return badRequest('A credencial de extração deste Gerente Regional ainda não está configurada.')
+  const existing = await env.DB.prepare(`
+    SELECT id FROM comandos_automacao
+     WHERE regional_id = ? AND tipo = ? AND status IN ('aguardando', 'executando')
+     LIMIT 1
+  `).bind(user.regional_id, type).first()
+  if (existing) return json({ erro: 'Esta extração já está aguardando ou em execução.' }, 409)
+  const id = `cmd-${crypto.randomUUID()}`
+  const now = new Date().toISOString()
+  await env.DB.prepare(`
+    INSERT INTO comandos_automacao
+      (id, regional_id, tipo, parametros_json, status, solicitado_por, mensagem, solicitado_em, atualizado_em)
+    VALUES (?, ?, ?, '{}', 'aguardando', ?, ?, ?, ?)
+  `).bind(id, user.regional_id, type, user.email, 'Solicitação registrada. O processador regional usará a credencial vinculada ao RG.', now, now).run()
+  return json({ sucesso: true, id, status: 'aguardando', mensagem: 'Solicitação registrada na fila regional.' }, 202)
 }
 
 async function createDistrict(request, env) {
-  const user = await session(request, env)
-  if (!user) return unauthorized()
-  if (user.perfil !== 'RG') return forbidden()
+  const { denial, user } = await requireRG(request, env)
+  if (denial) return denial
   const data = await body(request)
   const nome = String(data.nome || '').trim()
   const codigo = String(data.codigo || '').trim()
@@ -283,16 +501,14 @@ async function createDistrict(request, env) {
 }
 
 async function createConsultant(request, env) {
-  const user = await session(request, env)
-  if (!user) return unauthorized()
-  if (user.perfil !== 'RG') return forbidden()
+  const { denial, user } = await requireRG(request, env)
+  if (denial) return denial
   const data = await body(request)
   const districtId = Number(data.distrital_id)
   const nome = String(data.nome || '').trim()
   const codigo = String(data.codigo || '').trim()
   const email = String(data.email || '').trim().toLowerCase()
-  const allowed = await env.DB.prepare('SELECT id FROM distritais WHERE id = ? AND regional_id = ?')
-    .bind(districtId, user.regional_id).first()
+  const allowed = await env.DB.prepare('SELECT id FROM distritais WHERE id = ? AND regional_id = ?').bind(districtId, user.regional_id).first()
   if (!allowed || !nome || !codigo) return badRequest('Distrital, nome e código são obrigatórios.')
   await env.DB.prepare(`
     INSERT INTO consultores (distrital_id, nome, codigo, email, ativo, criado_em)
@@ -302,53 +518,32 @@ async function createConsultant(request, env) {
 }
 
 async function createUser(request, env) {
-  const user = await session(request, env)
-  if (!user) return unauthorized()
-  if (user.perfil !== 'RG') return forbidden()
+  const { denial, user } = await requireRG(request, env)
+  if (denial) return denial
   const data = await body(request)
-  const perfil = String(data.perfil || '').toUpperCase()
+  const profile = String(data.perfil || '').toUpperCase()
   const districtId = Number(data.distrital_id) || null
   const nome = String(data.nome || '').trim()
   const email = String(data.email || '').trim().toLowerCase()
   const senha = String(data.senha || '')
-  if (!['RG', 'GD', 'CONSULTOR'].includes(perfil) || !nome || !email.includes('@') || senha.length < 8) {
+  if (!['GD', 'CONSULTOR'].includes(profile) || !nome || !email.includes('@') || senha.length < 8) {
     return badRequest('Preencha corretamente perfil, nome, e-mail e senha.')
   }
-  if (perfil !== 'RG' && !districtId) return badRequest('Selecione a Distrital para GD ou Consultor.')
-  if (districtId) {
-    const allowed = await env.DB.prepare('SELECT id FROM distritais WHERE id = ? AND regional_id = ?')
-      .bind(districtId, user.regional_id).first()
-    if (!allowed) return badRequest('Distrital inválida.')
-  }
+  if (!districtId) return badRequest('Selecione a Distrital.')
+  const allowed = await env.DB.prepare('SELECT id FROM distritais WHERE id = ? AND regional_id = ?').bind(districtId, user.regional_id).first()
+  if (!allowed) return badRequest('Distrital inválida.')
+  if (await emailInUse(env, email)) return json({ erro: 'Este e-mail já possui acesso cadastrado.' }, 409)
+
   let consultantId = null
-  if (perfil === 'CONSULTOR') {
-    const consultant = await env.DB.prepare('SELECT id FROM consultores WHERE distrital_id = ? AND lower(email) = ?')
-      .bind(districtId, email).first()
-    if (!consultant) {
-      return badRequest('Cadastre primeiro o Consultor na Distrital usando o mesmo e-mail do acesso.')
-    }
+  if (profile === 'CONSULTOR') {
+    const consultant = await env.DB.prepare('SELECT id FROM consultores WHERE distrital_id = ? AND lower(email) = ?').bind(districtId, email).first()
+    if (!consultant) return badRequest('Cadastre primeiro o Consultor na Distrital usando o mesmo e-mail do acesso.')
     consultantId = consultant.id
   }
-  const passwordHash = await hashPassword(senha)
   await env.DB.prepare(`
     INSERT INTO usuarios (regional_id, distrital_id, consultor_id, nome, email, senha_hash, perfil, ativo, criado_em)
     VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
-  `).bind(user.regional_id, districtId, consultantId, nome, email, passwordHash, perfil).run()
-  return json({ ok: true }, 201)
-}
-
-async function createAutomation(request, env) {
-  const user = await session(request, env)
-  if (!user) return unauthorized()
-  if (user.perfil !== 'RG') return forbidden()
-  const data = await body(request)
-  const nome = String(data.nome || '').trim()
-  const next = String(data.proxima_execucao || '').trim() || null
-  if (!nome) return badRequest('Informe o nome da automação.')
-  await env.DB.prepare(`
-    INSERT INTO automacoes (regional_id, nome, status, proxima_execucao, criado_em)
-    VALUES (?, ?, 'ATIVO', ?, datetime('now'))
-  `).bind(user.regional_id, nome, next).run()
+  `).bind(user.regional_id, districtId, consultantId, nome, email, await hashPassword(senha), profile).run()
   return json({ ok: true }, 201)
 }
 
@@ -361,24 +556,28 @@ export async function onRequest(context) {
 
   try {
     if (method === 'GET' && path === 'health') return json({ status: 'ok', database: 'ok' })
-    if (method === 'GET' && path === 'regionais') return listRegionais(env)
-    if (method === 'GET' && path === 'setup-status') return setupStatus(url, env)
-    if (method === 'POST' && path === 'setup') return setup(request, env)
-    if (method === 'POST' && path === 'login') return login(request, env)
+    if (method === 'GET' && path === 'auth/status') return authStatus(env)
+    if (method === 'POST' && path === 'auth/developer-setup') return developerSetup(request, env)
+    if (method === 'POST' && path === 'auth/login') return login(request, env)
     if (method === 'GET' && path === 'me') return me(request, env)
     if (method === 'POST' && path === 'logout') return logout(request, env)
+    if (method === 'GET' && path === 'developer/estrutura') return developerStructure(request, env)
+    if (method === 'POST' && path === 'developer/regionais') return createRegional(request, env)
+    if (method === 'POST' && path === 'developer/gerentes-regionais') return createRegionalManager(request, env)
     if (method === 'GET' && path === 'hierarquia') return hierarchy(request, env)
     if (method === 'GET' && path === 'dashboard') return dashboard(request, env, url)
+    if (method === 'GET' && path === 'integracoes/status') return integrationStatus(request, env)
     if (method === 'GET' && path === 'automacoes') return automations(request, env)
+    if (method === 'POST' && path === 'automacoes/solicitar') return requestAutomation(request, env)
     if (method === 'POST' && path === 'admin/distritais') return createDistrict(request, env)
     if (method === 'POST' && path === 'admin/consultores') return createConsultant(request, env)
     if (method === 'POST' && path === 'admin/usuarios') return createUser(request, env)
-    if (method === 'POST' && path === 'admin/automacoes') return createAutomation(request, env)
     return json({ erro: 'Rota não encontrada.' }, 404)
   } catch (error) {
     console.error(error)
     const detail = String(error?.message || error)
     if (detail.includes('UNIQUE constraint failed')) return json({ erro: 'Já existe um cadastro com estes dados.' }, 409)
+    if (detail.includes('no such table')) return json({ erro: 'A atualização do banco ainda está sendo aplicada. Aguarde o deploy terminar.', detalhe: detail }, 503)
     return json({ erro: 'Erro interno ao processar a solicitação.', detalhe: detail }, 500)
   }
 }
