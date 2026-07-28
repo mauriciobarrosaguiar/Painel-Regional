@@ -110,6 +110,7 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
   const [structure, setStructure] = useState<Structure>(emptyStructure)
   const [loading, setLoading] = useState(true)
   const [importing, setImporting] = useState(false)
+  const [importMode, setImportMode] = useState<'stored' | 'file' | ''>('')
   const [changing, setChanging] = useState<number[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -136,11 +137,35 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
 
   useEffect(() => { void load() }, [])
 
+  function showImportResult(result: ImportResponse) {
+    setMessage(`${result.mensagem} Importados: ${result.resumo.regionais} Regionais, ${result.resumo.distritais} Distritais e ${result.resumo.consultores} Consultores.`)
+    setWarnings(result.avisos || [])
+  }
+
+  async function importStoredBase() {
+    setImporting(true)
+    setImportMode('stored')
+    setMessage('')
+    setError('')
+    setWarnings([])
+    try {
+      const result = await api<ImportResponse>('developer/importar-base-interna', { method: 'POST' })
+      showImportResult(result)
+      await load()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Não foi possível usar a base já carregada.')
+    } finally {
+      setImporting(false)
+      setImportMode('')
+    }
+  }
+
   async function importFile(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget
     const file = input.files?.[0]
     if (!file) return
     setImporting(true)
+    setImportMode('file')
     setMessage('')
     setError('')
     setWarnings([])
@@ -155,14 +180,14 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
           linhas: parsed.rows,
         }),
       })
-      setMessage(`${result.mensagem} Importados: ${result.resumo.regionais} Regionais, ${result.resumo.distritais} Distritais e ${result.resumo.consultores} Consultores.`)
-      setWarnings(result.avisos || [])
+      showImportResult(result)
       await load()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Não foi possível importar a planilha.')
     } finally {
       input.value = ''
       setImporting(false)
+      setImportMode('')
     }
   }
 
@@ -207,13 +232,19 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
         <section className="developer-import-card">
           <div className="developer-import-copy">
             <span className="developer-card-icon">X</span>
-            <div><span className="developer-kicker">Atualização da base</span><h2>Importar Estrutura de Pessoas</h2><p>O sistema procura a aba <strong>Mês Atual</strong> e lê: C/D para Consultor, K para login EMS, M/N para GD e O/P para GR.</p></div>
+            <div><span className="developer-kicker">Atualização da base</span><h2>Importar Estrutura de Pessoas</h2><p>A base enviada em 28/07/2026 já está guardada no sistema. Também será possível selecionar uma versão nova depois.</p></div>
           </div>
-          <label className={`developer-file-button ${importing ? 'disabled' : ''}`}>
-            <input type="file" accept=".xlsx,.xls" onChange={(event) => void importFile(event)} disabled={importing} />
-            {importing ? 'Importando e criando acessos…' : 'Selecionar planilha Excel'}
-          </label>
+          <div className="developer-import-actions">
+            <button className="developer-stored-button" type="button" onClick={() => void importStoredBase()} disabled={importing}>
+              {importMode === 'stored' ? 'Carregando base…' : 'Usar base já carregada'}
+            </button>
+            <label className={`developer-file-button ${importing ? 'disabled' : ''}`}>
+              <input type="file" accept=".xlsx,.xls" onChange={(event) => void importFile(event)} disabled={importing} />
+              {importMode === 'file' ? 'Importando planilha…' : 'Selecionar planilha nova'}
+            </label>
+          </div>
           <div className="developer-rules">
+            <div><b>Base guardada</b><span>37 Regionais · 100 Distritais · 323 Consultores ativos</span></div>
             <div><b>Login</b><span>Coluna K: t0034327 ou t0034327@ems.com.br</span></div>
             <div><b>Senha inicial</b><span>Setor próprio: RG, GD ou Consultor</span></div>
             <div><b>Visibilidade</b><span>A Regional só aparece após ativar o GR</span></div>
@@ -240,7 +271,7 @@ export default function DeveloperPanel({ user, onLogout }: Props) {
                     </tr>
                   )
                 })}
-                {!structure.regionais.length && <tr><td colSpan={6} className="developer-empty">Importe a planilha Estrutura de Pessoas para cadastrar a hierarquia.</td></tr>}
+                {!structure.regionais.length && <tr><td colSpan={6} className="developer-empty">Use a base já carregada para cadastrar a hierarquia.</td></tr>}
               </tbody>
             </table>
           </div>
