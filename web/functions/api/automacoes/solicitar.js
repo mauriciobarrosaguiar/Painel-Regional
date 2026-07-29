@@ -13,11 +13,12 @@ export async function onRequestPost({ request, env }) {
   const credential = await env.DB.prepare(`
     SELECT id
       FROM credenciais_integracoes
-     WHERE regional_id = ? AND tipo = ? AND status = 'CONFIGURADA'
+     WHERE regional_id = ? AND status = 'CONFIGURADA'
+     ORDER BY CASE WHEN tipo = ? THEN 0 ELSE 1 END, atualizado_em DESC
+     LIMIT 1
   `).bind(user.regional_id, type).first()
   if (!credential) {
-    const name = type === 'BUSSOLA' ? 'Bússola' : 'Mercado Farma'
-    return badRequest(`Configure primeiro o login e a senha do ${name} na Administração.`)
+    return badRequest('Configure primeiro o login e a senha únicos do Bússola e Mercado Farma na Administração.')
   }
 
   const existing = await env.DB.prepare(`
@@ -40,7 +41,7 @@ export async function onRequestPost({ request, env }) {
     type,
     JSON.stringify({ regional_id: Number(user.regional_id), credencial_tipo: type }),
     user.email,
-    'Solicitação registrada. O processador usará somente a credencial desta integração e desta Regional.',
+    'Solicitação registrada. O processador usará a credencial única desta Regional.',
     now,
     now,
   ).run()
