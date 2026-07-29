@@ -41,22 +41,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           API_URL="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database"
-
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            "${API_URL}?name=painel-regional-db" \
-            > /tmp/d1-list.json
+            "${API_URL}?name=painel-regional-db" > /tmp/d1-list.json
 
           DB_ID=$(node <<'NODE'
           const fs = require('fs')
           const data = JSON.parse(fs.readFileSync('/tmp/d1-list.json', 'utf8'))
-          if (!data.success) {
-            console.error(JSON.stringify(data.errors || data))
-            process.exit(1)
-          }
+          if (!data.success) { console.error(JSON.stringify(data.errors || data)); process.exit(1) }
           const rows = Array.isArray(data.result) ? data.result : []
           const row = rows.find((item) => item.name === 'painel-regional-db')
           process.stdout.write(row?.uuid || '')
@@ -69,16 +63,11 @@ jobs:
               -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
               -H "Content-Type: application/json" \
               --data '{"name":"painel-regional-db"}' \
-              "${API_URL}" \
-              > /tmp/d1-create.json
-
+              "${API_URL}" > /tmp/d1-create.json
             DB_ID=$(node <<'NODE'
           const fs = require('fs')
           const data = JSON.parse(fs.readFileSync('/tmp/d1-create.json', 'utf8'))
-          if (!data.success) {
-            console.error(JSON.stringify(data.errors || data))
-            process.exit(1)
-          }
+          if (!data.success) { console.error(JSON.stringify(data.errors || data)); process.exit(1) }
           process.stdout.write(data.result?.uuid || '')
           NODE
             )
@@ -100,15 +89,10 @@ jobs:
             current.database_name = 'painel-regional-db'
             current.database_id = databaseId
           } else {
-            config.d1_databases.push({
-              binding: 'DB',
-              database_name: 'painel-regional-db',
-              database_id: databaseId,
-            })
+            config.d1_databases.push({ binding: 'DB', database_name: 'painel-regional-db', database_id: databaseId })
           }
           fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
           NODE
-
           echo "Banco D1 configurado com sucesso."
 
       - name: Aplicar estrutura do banco D1
@@ -122,7 +106,9 @@ jobs:
         run: |
           set -euo pipefail
           APP_SECRET=$(printf '%s' "${CLOUDFLARE_API_TOKEN}:${CLOUDFLARE_ACCOUNT_ID}:painel-regional:v1" | sha256sum | cut -d' ' -f1)
+          ADMIN_SECRET=$(printf '%s' "${CLOUDFLARE_API_TOKEN}:${CLOUDFLARE_ACCOUNT_ID}:painel-regional:admin:v1" | sha256sum | cut -d' ' -f1)
           printf '%s' "$APP_SECRET" | npx wrangler pages secret put PAINEL_REGIONAL_KEY --project-name painel-regional
+          printf '%s' "$ADMIN_SECRET" | npx wrangler pages secret put PAINEL_ADMIN_KEY --project-name painel-regional
 
       - name: Publicar Painel Regional
         run: npx wrangler pages deploy dist --project-name painel-regional --branch main --commit-hash "$GITHUB_SHA" --commit-dirty=true
