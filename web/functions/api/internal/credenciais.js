@@ -37,9 +37,11 @@ export async function onRequestPost({ request, env }) {
   const current = await env.DB.prepare(`
     SELECT credencial_cifrada
       FROM credenciais_integracoes
-     WHERE regional_id = ? AND tipo = ? AND status = 'CONFIGURADA'
+     WHERE regional_id = ? AND status = 'CONFIGURADA'
+     ORDER BY CASE WHEN tipo = ? THEN 0 ELSE 1 END, atualizado_em DESC
+     LIMIT 1
   `).bind(regionalId, type).first()
-  if (!current) return json({ erro: 'Credencial não configurada para esta Regional.' }, 404)
+  if (!current) return json({ erro: 'Credencial única não configurada para esta Regional.' }, 404)
 
   try {
     const credential = await decryptCredentials(current.credencial_cifrada, env.PAINEL_REGIONAL_KEY)
