@@ -22,21 +22,23 @@ export async function onRequestGet({ request, env }) {
     env.DB.prepare(`
       SELECT tipo, status, usuario_mascarado, atualizado_em
         FROM credenciais_integracoes
-       WHERE regional_id = ?
+       WHERE regional_id = ? AND status = 'CONFIGURADA'
+       ORDER BY atualizado_em DESC
     `).bind(user.regional_id),
   ])
 
-  const credentialMap = Object.fromEntries((credentials.results || []).map((item) => [item.tipo, item]))
+  const sharedCredential = (credentials.results || [])[0] || null
   const active = (commands.results || []).filter((item) => ['aguardando', 'executando'].includes(String(item.status).toLowerCase())).length
 
   return json({
     comandos: commands.results || [],
     extracoes: extractions.results || [],
     em_execucao: active,
-    credencial_configurada: Boolean(credentialMap.BUSSOLA && credentialMap.MERCADO_FARMA),
+    credencial_configurada: Boolean(sharedCredential),
     credenciais: {
-      bussola: credentialMap.BUSSOLA || null,
-      mercado_farma: credentialMap.MERCADO_FARMA || null,
+      integracao: sharedCredential,
+      bussola: sharedCredential,
+      mercado_farma: sharedCredential,
     },
     atualizado_em: new Date().toISOString(),
   })
