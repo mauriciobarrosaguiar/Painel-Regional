@@ -5,7 +5,9 @@ export type RegionalPage =
   | 'consultores'
   | 'clientes'
   | 'foco-semanal'
+  | 'oportunidades'
   | 'mercado-farma'
+  | 'historico'
   | 'administracao'
   | 'automacoes'
 
@@ -16,7 +18,9 @@ const valid = new Set<RegionalPage>([
   'consultores',
   'clientes',
   'foco-semanal',
+  'oportunidades',
   'mercado-farma',
+  'historico',
   'administracao',
   'automacoes',
 ])
