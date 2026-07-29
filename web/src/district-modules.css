@@ -17,7 +17,14 @@
 .gd-module-content strong{font-size:15px;letter-spacing:.02em}
 .gd-module-content small{color:#64748b;font-size:12px;line-height:1.35}
 .gd-module-arrow{font-size:22px;color:#64748b}
-.integration-forms{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.integration-forms{display:grid;grid-template-columns:minmax(0,760px);justify-content:center;gap:18px}
+.integration-forms .integration-form:nth-child(2){display:none}
+.integration-forms .integration-form:first-child h2{font-size:0}
+.integration-forms .integration-form:first-child h2::after{content:'Bússola e Mercado Farma';font-size:32px}
+.integration-forms .integration-form:first-child label:nth-of-type(1)>span,.integration-forms .integration-form:first-child label:nth-of-type(2)>span,.integration-forms .integration-form:first-child button{font-size:0}
+.integration-forms .integration-form:first-child label:nth-of-type(1)>span::after{content:'Login do Bússola e Mercado Farma';font-size:14px}
+.integration-forms .integration-form:first-child label:nth-of-type(2)>span::after{content:'Senha do Bússola e Mercado Farma';font-size:14px}
+.integration-forms .integration-form:first-child button::after{content:'Salvar acesso único';font-size:16px}
 .integration-form p{margin:6px 0 18px;color:#64748b}
 .credential-ok,.credential-wait{display:inline-flex;padding:5px 9px;border-radius:999px;font-size:11px;font-weight:900}
 .credential-ok{background:#dcfce7;color:#157047}
