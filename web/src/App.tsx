@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, clearToken, getToken } from './api'
+import ClientBaseImport from './ClientBaseImport'
 import DeveloperPanel from './DeveloperPanel'
 import LoginPage from './LoginPage'
 import Workspace from './Workspace'
@@ -17,7 +18,6 @@ export default function App() {
       try {
         const status = await api<{ desenvolvedor_configurado: boolean }>('auth/status')
         setDeveloperConfigured(status.desenvolvedor_configurado)
-
         if (!getToken()) return
         const session = await api<{ usuario: SessionUser; regional: Regional | null }>('me')
         setUser(session.usuario)
@@ -46,16 +46,11 @@ export default function App() {
     setRegional(null)
   }
 
-  if (loading) {
-    return <div className="center-screen"><div className="loader" /><h2>Carregando Painel Regional</h2></div>
-  }
-
-  if (!user) {
-    return <LoginPage developerConfigured={developerConfigured} onAuthenticated={authenticated} />
-  }
+  if (loading) return <div className="center-screen"><div className="loader" /><h2>Carregando Painel Regional</h2></div>
+  if (!user) return <LoginPage developerConfigured={developerConfigured} onAuthenticated={authenticated} />
 
   if (user.perfil === 'DESENVOLVEDOR') {
-    return <DeveloperPanel user={user} onLogout={logout} />
+    return <><DeveloperPanel user={user} onLogout={logout} /><ClientBaseImport /></>
   }
 
   if (!regional) {
