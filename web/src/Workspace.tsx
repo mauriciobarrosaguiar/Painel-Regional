@@ -85,11 +85,13 @@ const emptyClients: ClientsData = {
 
 const districtPages: { id: RegionalPage; label: string }[] = [
   { id: 'visao-geral', label: 'Visão Geral' },
-  { id: 'sips', label: 'SIP / Redes' },
   { id: 'consultores', label: 'Consultores' },
   { id: 'clientes', label: 'Clientes' },
   { id: 'foco-semanal', label: 'Foco Semanal' },
+  { id: 'oportunidades', label: 'Oportunidades' },
   { id: 'mercado-farma', label: 'Mercado Farma' },
+  { id: 'sips', label: 'SIP / Redes' },
+  { id: 'historico', label: 'Histórico' },
 ]
 
 export default function Workspace({ user, regional, onLogout }: Props) {
@@ -259,12 +261,14 @@ export default function Workspace({ user, regional, onLogout }: Props) {
         {message && <div className="notice">{message}</div>}
 
         {page === 'regional' && <RegionalOverview user={user} regional={regional} dashboard={dashboard} loading={loading} districts={districts} onOpen={openDistrict} />}
-        {page === 'visao-geral' && selectedDistrict && <DistrictOverview district={selectedDistrict} dashboard={dashboard} loading={loading} />}
+        {page === 'visao-geral' && selectedDistrict && <DistrictOverview district={selectedDistrict} dashboard={dashboard} loading={loading} onNavigate={navigate} />}
         {page === 'sips' && selectedDistrict && <SipModule district={selectedDistrict} dashboard={dashboard} />}
         {page === 'consultores' && selectedDistrict && <ConsultantsModule district={selectedDistrict} />}
         {page === 'clientes' && selectedDistrict && <ClientsModule data={clients} search={clientSearch} page={clientPage} onSearch={(value) => { setClientSearch(value); setClientPage(1) }} onPage={setClientPage} onReload={() => void loadClients()} />}
         {page === 'foco-semanal' && selectedDistrict && <FocoModule district={selectedDistrict} />}
+        {page === 'oportunidades' && selectedDistrict && <OpportunitiesModule district={selectedDistrict} dashboard={dashboard} />}
         {page === 'mercado-farma' && selectedDistrict && <MarketModule credentials={credentials} onRun={() => void requestAutomation('MERCADO_FARMA')} />}
+        {page === 'historico' && selectedDistrict && <HistoryModule district={selectedDistrict} />}
         {page === 'administracao' && user.perfil === 'RG' && <Administration credentials={credentials} onSave={saveCredential} />}
         {page === 'automacoes' && user.perfil === 'RG' && <AutomationCenter data={automations} onRun={requestAutomation} />}
       </main>
@@ -278,8 +282,45 @@ function RegionalOverview({ user, regional, dashboard, loading, districts, onOpe
   return <><section className="hero"><div><span className="eyebrow">Gestão comercial</span><h1>Olá, {user.nome.split(' ')[0]}</h1><p>Acompanhe a operação da {regional.nome} e abra uma Distrital.</p></div></section><DashboardPanel dashboard={dashboard} loading={loading} /><SectionTitle title="Distritais da Regional" description={`${districts.length} distrital(is) disponível(is)`} /><DistrictCards districts={districts} onOpen={onOpen} /></>
 }
 
-function DistrictOverview({ district, dashboard, loading }: { district: Distrital; dashboard: Dashboard; loading: boolean }) {
-  return <><ModuleHero eyebrow="Distrital" title={district.nome} description={`GD: ${district.gerente_nome || 'não informado'} · ${district.consultores.length} Consultores`} /><DashboardPanel dashboard={dashboard} loading={loading} /><section className="north-module-grid">{[['Consultores', district.consultores.length], ['Clientes com venda', dashboard.clientes_com_venda], ['Clientes sem venda', dashboard.clientes_sem_venda], ['Pedidos não faturados', dashboard.pedidos_nao_faturados]].map(([label, value]) => <article key={String(label)}><span>{label}</span><strong>{number.format(Number(value))}</strong></article>)}</section></>
+function DistrictOverview({ district, dashboard, loading, onNavigate }: { district: Distrital; dashboard: Dashboard; loading: boolean; onNavigate: (page: RegionalPage) => void }) {
+  const clientsTotal = dashboard.clientes_com_venda + dashboard.clientes_sem_venda
+  const modules: { id: RegionalPage; icon: string; label: string; summary: string }[] = [
+    { id: 'consultores', icon: 'C', label: 'CONSULTOR', summary: `${number.format(district.consultores.length)} consultor(es)` },
+    { id: 'clientes', icon: 'CL', label: 'CLIENTES', summary: `${number.format(clientsTotal)} cliente(s)` },
+    { id: 'foco-semanal', icon: 'FS', label: 'FOCO SEMANAL', summary: 'Missões e resultados' },
+    { id: 'oportunidades', icon: 'OP', label: 'OPORTUNIDADES', summary: `${number.format(dashboard.clientes_sem_venda)} cliente(s) sem venda` },
+    { id: 'mercado-farma', icon: 'MF', label: 'MERCADO FARMA', summary: 'Preços e estoques' },
+    { id: 'sips', icon: 'SIP', label: 'SIP', summary: 'Redes, metas e cobertura' },
+    { id: 'historico', icon: 'H', label: 'HISTÓRICO', summary: 'Evolução mês a mês' },
+  ]
+
+  return (
+    <>
+      <ModuleHero eyebrow="Distrital" title={district.nome} description={`GD: ${district.gerente_nome || 'não informado'} · ${district.consultores.length} Consultores`} />
+      <DashboardPanel dashboard={dashboard} loading={loading} />
+      <section className="gd-modules-section">
+        <div className="gd-modules-heading">
+          <div>
+            <span className="eyebrow">Acesso rápido</span>
+            <h2>Módulos do GD</h2>
+          </div>
+          <p>Selecione um card para abrir as informações desta Distrital.</p>
+        </div>
+        <div className="gd-module-grid">
+          {modules.map((module) => (
+            <button className="gd-module-card" key={module.id} onClick={() => onNavigate(module.id)}>
+              <span className="gd-module-icon">{module.icon}</span>
+              <span className="gd-module-content">
+                <strong>{module.label}</strong>
+                <small>{module.summary}</small>
+              </span>
+              <b className="gd-module-arrow">→</b>
+            </button>
+          ))}
+        </div>
+      </section>
+    </>
+  )
 }
 
 function SipModule({ district, dashboard }: { district: Distrital; dashboard: Dashboard }) {
@@ -298,8 +339,17 @@ function FocoModule({ district }: { district: Distrital }) {
   return <><ModuleHero eyebrow="Foco Semanal" title={`Missões — ${district.nome}`} description="Produtos foco, meta, faturamento, cobertura e percentual por Consultor." /><section className="module-empty-card"><h2>Focos em andamento</h2><p>A estrutura está pronta para receber as missões e o histórico extraídos do Bússola.</p></section></>
 }
 
+function OpportunitiesModule({ district, dashboard }: { district: Distrital; dashboard: Dashboard }) {
+  const priorityGap = Math.max(dashboard.meta_ol_prioritarios - dashboard.ol_prioritarios, 0)
+  return <><ModuleHero eyebrow="Oportunidades" title={`Oportunidades — ${district.nome}`} description="Clientes sem venda, pedidos não faturados e gaps para direcionar a atuação da equipe." /><section className="north-module-grid"><article><span>Clientes sem venda</span><strong>{number.format(dashboard.clientes_sem_venda)}</strong></article><article><span>Pedidos não faturados</span><strong>{number.format(dashboard.pedidos_nao_faturados)}</strong></article><article><span>Valor não faturado</span><strong>{money.format(dashboard.valor_nao_faturado)}</strong></article><article><span>GAP de Prioritários</span><strong>{money.format(priorityGap)}</strong></article></section><EmptyState text="A lista detalhada de oportunidades será alimentada pela sincronização do Bússola." /></>
+}
+
 function MarketModule({ credentials, onRun }: { credentials: CredentialStatus; onRun: () => void }) {
   return <><ModuleHero eyebrow="Mercado Farma" title="Preços e estoques por UF" description="Produtos, distribuidores, estoque, descontos e melhor preço, como no Painel Norte." /><section className="module-empty-card"><h2>{credentials.mercado_farma ? 'Acesso configurado' : 'Acesso pendente'}</h2><p>{credentials.mercado_farma?.mensagem_status || 'O GR deve cadastrar o login e a senha do Mercado Farma na Administração.'}</p><button className="primary-button" disabled={!credentials.mercado_farma} onClick={onRun}>Atualizar Mercado Farma</button></section></>
+}
+
+function HistoryModule({ district }: { district: Distrital }) {
+  return <><ModuleHero eyebrow="Histórico" title={`Histórico — ${district.nome}`} description="Acompanhamento mensal dos principais indicadores da Distrital." /><section className="module-empty-card"><h2>Evolução mês a mês</h2><p>A página está disponível para receber o histórico consolidado das extrações do Bússola.</p></section></>
 }
 
 function Administration({ credentials, onSave }: { credentials: CredentialStatus; onSave: (event: FormEvent<HTMLFormElement>, type: 'BUSSOLA' | 'MERCADO_FARMA') => void }) {
