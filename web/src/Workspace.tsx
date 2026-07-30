@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from './api'
+import ConsultantsResultsModule from './ConsultantsResultsModule'
 import type { AutomationData, CredentialSummary, Dashboard, DistrictCredential, Distrital, Hierarquia, Regional, SessionUser } from './types'
 import { readRegionalNavigation, saveRegionalNavigation } from './regionalNavigation'
 import type { RegionalPage } from './regionalNavigation'
@@ -293,7 +294,7 @@ export default function Workspace({ user, regional, onLogout }: Props) {
         {page === 'regional' && <RegionalOverview user={user} regional={regional} dashboard={dashboard} loading={loading} districts={districts} onOpen={openDistrict} />}
         {page === 'visao-geral' && selectedDistrict && <DistrictOverview profile={user.perfil} district={selectedDistrict} dashboard={dashboard} loading={loading} onNavigate={navigate} />}
         {page === 'sips' && selectedDistrict && <SipModule district={selectedDistrict} dashboard={dashboard} />}
-        {page === 'consultores' && selectedDistrict && <ConsultantsModule district={selectedDistrict} />}
+        {page === 'consultores' && selectedDistrict && <ConsultantsResultsModule district={selectedDistrict} />}
         {page === 'clientes' && selectedDistrict && <ClientsModule data={clients} search={clientSearch} page={clientPage} onSearch={(value) => { setClientSearch(value); setClientPage(1) }} onPage={setClientPage} onReload={() => void loadClients()} />}
         {page === 'foco-semanal' && selectedDistrict && <FocoModule district={selectedDistrict} />}
         {page === 'oportunidades' && selectedDistrict && <OpportunitiesModule district={selectedDistrict} dashboard={dashboard} />}
