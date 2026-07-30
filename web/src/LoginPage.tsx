@@ -87,7 +87,7 @@ export default function LoginPage({ developerConfigured, onAuthenticated }: Prop
               required
               autoFocus
               autoComplete="username"
-              placeholder={developerMode ? 'seuemail@dominio.com' : 'm0000000 ou m0000000@ems.com.br'}
+              placeholder={developerMode ? 'seuemail@dominio.com' : 'm0000000'}
             />
           </label>
           <label>
