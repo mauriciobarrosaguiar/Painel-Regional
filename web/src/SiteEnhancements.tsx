@@ -31,8 +31,15 @@ const normalizedText = (value?: string | null) => String(value || '')
   .trim()
   .toUpperCase()
 
+const displayFirstName = (value?: string | null) => {
+  const firstName = String(value || '').trim().split(/\s+/)[0] || 'Usuário'
+  const normalized = firstName.toLocaleLowerCase('pt-BR')
+  return normalized.charAt(0).toLocaleUpperCase('pt-BR') + normalized.slice(1)
+}
+
 export default function SiteEnhancements({ user }: Props) {
   const [footerTarget, setFooterTarget] = useState<HTMLElement | null>(null)
+  const [greetingTarget, setGreetingTarget] = useState<HTMLElement | null>(null)
   const [credentialTarget, setCredentialTarget] = useState<HTMLElement | null>(null)
   const [credential, setCredential] = useState<CredentialItem | null>(null)
   const [editing, setEditing] = useState(false)
@@ -41,6 +48,14 @@ export default function SiteEnhancements({ user }: Props) {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    const restoreGreeting = (element: HTMLElement | null) => {
+      if (!element) return
+      const originalTitle = element.dataset.originalTitle
+      if (originalTitle) element.textContent = originalTitle
+      delete element.dataset.originalTitle
+      element.classList.remove('personalized-greeting-host')
+    }
+
     const updateTargets = () => {
       const workspaceFooter = document.querySelector<HTMLElement>('.app-shell > footer')
       const developerShell = document.querySelector<HTMLElement>('.developer-shell')
@@ -56,6 +71,19 @@ export default function SiteEnhancements({ user }: Props) {
       const activeNavigation = normalizedText(
         document.querySelector<HTMLElement>('.regional-main-nav button.active')?.textContent,
       )
+      const nextGreetingTarget = activeNavigation === 'VISAO GERAL'
+        ? document.querySelector<HTMLElement>('.content > .hero.module-hero h1')
+        : null
+      const previousGreeting = document.querySelector<HTMLElement>('.personalized-greeting-host')
+
+      if (previousGreeting && previousGreeting !== nextGreetingTarget) restoreGreeting(previousGreeting)
+      if (nextGreetingTarget && !nextGreetingTarget.classList.contains('personalized-greeting-host')) {
+        nextGreetingTarget.dataset.originalTitle = nextGreetingTarget.textContent || ''
+        nextGreetingTarget.classList.add('personalized-greeting-host')
+        nextGreetingTarget.textContent = ''
+      }
+      setGreetingTarget(nextGreetingTarget)
+
       const nextCredentialTarget = user?.perfil === 'GD' && activeNavigation.includes('MEUS ACESSOS')
         ? document.querySelector<HTMLElement>('.integration-forms')
         : null
@@ -84,6 +112,7 @@ export default function SiteEnhancements({ user }: Props) {
       observer.disconnect()
       window.removeEventListener('popstate', updateTargets)
       document.querySelector<HTMLElement>('.mba-credit-host')?.classList.remove('mba-credit-host')
+      restoreGreeting(document.querySelector<HTMLElement>('.personalized-greeting-host'))
       document.querySelector<HTMLElement>('.integration-forms.secure-credential-host')?.classList.remove('secure-credential-host')
     }
   }, [user?.perfil])
@@ -147,6 +176,11 @@ export default function SiteEnhancements({ user }: Props) {
       Desenvolvido por Mauricio Barros de Aguiar <span aria-hidden="true">*</span> mbalabs.com.br
     </a>
   )
+
+  const greetingView = greetingTarget && user ? createPortal(
+    <span>Olá, {displayFirstName(user.nome)}</span>,
+    greetingTarget,
+  ) : null
 
   const credentialView = credentialTarget ? createPortal(
     <section className="secure-credential-card" aria-label="Acesso protegido do Bússola e Mercado Farma">
@@ -214,6 +248,7 @@ export default function SiteEnhancements({ user }: Props) {
       {footerTarget && (footerTarget.matches('.app-shell > footer')
         ? createPortal(credit, footerTarget)
         : createPortal(<footer className="mba-credit-footer">{credit}</footer>, footerTarget))}
+      {greetingView}
       {credentialView}
     </>
   )
