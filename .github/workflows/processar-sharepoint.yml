@@ -1,0 +1,58 @@
+name: Processar metas do SharePoint
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: processar-sharepoint-metas
+  cancel-in-progress: false
+
+jobs:
+  processar:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    env:
+      PAINEL_URL: https://painel-regional.pages.dev
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+      MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+      MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+      SHAREPOINT_HOST: emspocbi.sharepoint.com
+      SHAREPOINT_SITE_PATH: /sites/CasadoGenricos
+      SHAREPOINT_METAS_FOLDER: PEX & Premiação/EMS/Metas/SELL OUT
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Instalar dependências
+        run: npm install
+
+      - name: Preparar chave interna do painel
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
+            echo "Secrets da Cloudflare não configurados."
+            exit 1
+          fi
+          ADMIN_SECRET=$(printf '%s' "${CLOUDFLARE_API_TOKEN}:${CLOUDFLARE_ACCOUNT_ID}:painel-regional:admin:v1" | sha256sum | cut -d' ' -f1)
+          echo "PAINEL_ADMIN_KEY=${ADMIN_SECRET}" >> "$GITHUB_ENV"
+
+      - name: Processar fila do SharePoint
+        run: node scripts/processar-sharepoint.mjs
