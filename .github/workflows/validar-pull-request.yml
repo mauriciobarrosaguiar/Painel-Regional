@@ -28,5 +28,8 @@ jobs:
       - name: Instalar dependências
         run: npm install
 
+      - name: Validar processador SharePoint
+        run: node --check scripts/processar-sharepoint.mjs
+
       - name: Validar TypeScript e build
         run: npm run build
