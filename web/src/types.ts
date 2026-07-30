@@ -56,10 +56,14 @@ export type Dashboard = {
   meta_ol_sem_combate: number
   meta_ol_prioritarios: number
   meta_ol_lancamentos: number
+  meta_demanda_sem_combate?: number
   clientes_com_venda: number
   clientes_sem_venda: number
   pedidos_nao_faturados: number
   valor_nao_faturado: number
+  competencia_resultado?: string | null
+  competencia_meta?: string | null
+  metas_atualizadas_em?: string
   atualizado_em: string
 }
 
@@ -69,6 +73,9 @@ export type AutomationCommand = {
   status: string
   mensagem?: string
   erro?: string
+  distrital_id?: number | null
+  distrital_nome?: string | null
+  distrital_codigo?: string | null
   solicitado_em: string
   iniciado_em?: string | null
   finalizado_em?: string | null
@@ -81,16 +88,44 @@ export type ExtractionItem = {
   total_registros: number
   mensagem?: string
   erro?: string
+  distrital_id?: number | null
+  distrital_nome?: string | null
+  distrital_codigo?: string | null
   iniciado_em?: string | null
   finalizado_em?: string | null
   criado_em: string
 }
 
+export type CredentialSummary = {
+  total: number
+  configuradas: number
+  pendentes: number
+  completa: boolean
+}
+
+export type DistrictCredential = {
+  id: number
+  nome: string
+  codigo: string
+  gerente_nome?: string
+  configurada: boolean
+  usuario_mascarado?: string
+  atualizado_em?: string | null
+}
+
 export type AutomationData = {
+  modo?: 'RG' | 'GD'
   comandos: AutomationCommand[]
   extracoes: ExtractionItem[]
   em_execucao: number
   credencial_configurada: boolean
+  credenciais?: {
+    integracao?: unknown | null
+    bussola?: unknown | null
+    mercado_farma?: unknown | null
+  }
+  distritais?: DistrictCredential[]
+  resumo_credenciais?: CredentialSummary
   atualizado_em: string
 }
 
