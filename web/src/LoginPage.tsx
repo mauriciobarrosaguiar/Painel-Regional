@@ -80,14 +80,14 @@ export default function LoginPage({ developerConfigured, onAuthenticated }: Prop
             <label><span>Nome completo</span><input name="nome" required minLength={3} autoComplete="name" /></label>
           )}
           <label>
-            <span>{developerMode ? 'E-mail' : 'Login EMS'}</span>
+            <span>{developerMode ? 'E-mail' : 'Matrícula ou e-mail EMS'}</span>
             <input
               name="email"
               type={developerMode ? 'email' : 'text'}
               required
               autoFocus
               autoComplete="username"
-              placeholder={developerMode ? 'seuemail@dominio.com' : 't0034327'}
+              placeholder={developerMode ? 'seuemail@dominio.com' : 'm0000000 ou m0000000@ems.com.br'}
             />
           </label>
           <label>
@@ -111,6 +111,11 @@ export default function LoginPage({ developerConfigured, onAuthenticated }: Prop
           </button>
         </form>
       </section>
+
+      <footer className="login-credit">
+        Desenvolvido por Mauricio Barros de Aguiar *{' '}
+        <a href="https://mbalabs.com.br" target="_blank" rel="noreferrer">mbalabs.com.br</a>
+      </footer>
     </main>
   )
 }
