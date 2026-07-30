@@ -5,6 +5,7 @@ import DeveloperPanel from './DeveloperPanel'
 import LoginPage from './LoginPage'
 import MetaUploadLauncher from './MetaUploadLauncher'
 import ProductBasesUpload from './ProductBasesUpload'
+import SiteEnhancements from './SiteEnhancements'
 import Workspace from './Workspace'
 import type { Regional, SessionUser } from './types'
 
@@ -52,7 +53,7 @@ export default function App() {
   if (!user) return <LoginPage developerConfigured={developerConfigured} onAuthenticated={authenticated} />
 
   if (user.perfil === 'DESENVOLVEDOR') {
-    return <><DeveloperPanel user={user} onLogout={logout} /><MetaUploadLauncher mode="DESENVOLVEDOR" /><ProductBasesUpload mode="DESENVOLVEDOR" /><ClientBaseImport /></>
+    return <><DeveloperPanel user={user} onLogout={logout} /><MetaUploadLauncher mode="DESENVOLVEDOR" /><ProductBasesUpload mode="DESENVOLVEDOR" /><ClientBaseImport /><SiteEnhancements user={user} /></>
   }
 
   if (!regional) {
@@ -64,5 +65,6 @@ export default function App() {
     {user.perfil === 'RG' && <MetaUploadLauncher mode="RG" regionalId={regional.id} regionalName={regional.nome} />}
     {user.perfil === 'RG' && <ProductBasesUpload mode="RG" regionalId={regional.id} regionalName={regional.nome} />}
     {user.perfil === 'GD' && <ProductBasesUpload mode="GD" regionalId={regional.id} regionalName={regional.nome} districtId={user.distrital_id} />}
+    <SiteEnhancements user={user} />
   </>
 }
