@@ -1,6 +1,7 @@
 import {
   createSession,
   ensureAuthSchema,
+  hashImportedPassword,
   json,
   publicUser,
   readBody,
@@ -9,10 +10,32 @@ import {
   badRequest,
 } from '../_lib/security.js'
 
-function normalizeLogin(value) {
-  const text = String(value || '').trim().toLowerCase()
-  if (!text) return ''
-  return text.includes('@') ? text : `${text}@ems.com.br`
+function loginIdentity(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (!raw) return { raw: '', local: '', email: '' }
+  const local = raw.includes('@') ? raw.split('@')[0] : raw
+  return {
+    raw,
+    local,
+    email: raw.includes('@') ? raw : `${raw}@ems.com.br`,
+  }
+}
+
+async function verifyUserPassword(password, user, env, identity) {
+  const contexts = [...new Set([
+    user.login_rede,
+    user.email,
+    identity.raw,
+    identity.email,
+    identity.local,
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))]
+
+  for (const context of contexts) {
+    if (await verifyPassword(password, user.senha_hash, env.PAINEL_REGIONAL_KEY, context)) {
+      return context
+    }
+  }
+  return ''
 }
 
 export async function onRequestPost({ request, env }) {
@@ -21,16 +44,15 @@ export async function onRequestPost({ request, env }) {
     await ensureAuthSchema(env)
 
     const data = await readBody(request)
-    const informado = String(data.email || data.login || '').trim().toLowerCase()
-    const email = normalizeLogin(informado)
+    const identity = loginIdentity(data.email || data.login)
     const senha = String(data.senha || '')
-    if (!email || !senha) return badRequest('Informe login EMS ou e-mail e senha.')
+    if (!identity.raw || !senha) return badRequest('Informe a matrícula ou o e-mail EMS e a senha.')
 
     const developer = await env.DB.prepare(`
       SELECT id, nome, email, senha_hash
         FROM desenvolvedores
        WHERE lower(email) = ? AND ativo = 1
-    `).bind(informado).first()
+    `).bind(identity.raw).first()
 
     if (developer && await verifyPassword(senha, developer.senha_hash)) {
       const now = new Date().toISOString()
@@ -57,17 +79,52 @@ export async function onRequestPost({ request, env }) {
       SELECT u.*, r.nome AS regional_nome, r.slug AS regional_slug
         FROM usuarios u
         JOIN regionais r ON r.id = u.regional_id
-       WHERE (lower(u.email) = ? OR lower(u.login_rede) = ?)
+       WHERE (
+              lower(trim(u.email)) IN (?, ?)
+           OR lower(trim(u.login_rede)) IN (?, ?)
+       )
          AND u.ativo = 1
          AND u.na_base_atual = 1
          AND r.ativo = 1
          AND r.na_base_atual = 1
-       ORDER BY u.id
+       ORDER BY
+         CASE WHEN lower(trim(u.login_rede)) = ? THEN 0 ELSE 1 END,
+         u.id
        LIMIT 1
-    `).bind(email, email).first()
+    `).bind(
+      identity.local,
+      identity.email,
+      identity.local,
+      identity.email,
+      identity.email,
+    ).first()
 
-    if (!user || !(await verifyPassword(senha, user.senha_hash, env.PAINEL_REGIONAL_KEY, user.login_rede || user.email))) {
-      return unauthorized('Login EMS ou senha do setor inválidos.')
+    const matchedContext = user
+      ? await verifyUserPassword(senha, user, env, identity)
+      : ''
+
+    if (!user || !matchedContext) {
+      return unauthorized('Matrícula EMS ou senha do setor inválidos.')
+    }
+
+    // Corrige automaticamente acessos importados em versões antigas que usavam
+    // a matrícula sem domínio como contexto do hash.
+    const canonicalContext = String(user.login_rede || user.email || '').trim().toLowerCase()
+    if (
+      canonicalContext
+      && matchedContext !== canonicalContext
+      && String(user.senha_hash || '').startsWith('estrutura-sha256$')
+    ) {
+      const repairedHash = await hashImportedPassword(
+        senha,
+        canonicalContext,
+        env.PAINEL_REGIONAL_KEY,
+      )
+      await env.DB.prepare(`
+        UPDATE usuarios
+           SET senha_hash = ?, atualizado_em = ?
+         WHERE id = ?
+      `).bind(repairedHash, new Date().toISOString(), user.id).run()
     }
 
     const token = await createSession(env, 'USUARIO', user.id)
