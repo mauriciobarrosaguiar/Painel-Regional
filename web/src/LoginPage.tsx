@@ -67,9 +67,6 @@ export default function LoginPage({ developerConfigured, onAuthenticated }: Prop
           <div><strong>Painel Regional</strong><span>Gestão Comercial</span></div>
         </div>
 
-        <span className="login-eyebrow">
-          {developerMode ? 'Administração da plataforma' : 'Acesso Regional'}
-        </span>
         <h1>
           {firstDeveloperAccess
             ? 'Crie seu primeiro acesso'
@@ -77,30 +74,33 @@ export default function LoginPage({ developerConfigured, onAuthenticated }: Prop
               ? 'Entre como desenvolvedor'
               : 'Entre no Painel Regional'}
         </h1>
-        <p>
-          {firstDeveloperAccess
-            ? 'Este acesso será usado para importar a Estrutura de Pessoas e ativar os Gerentes Regionais.'
-            : developerMode
-              ? 'Use o e-mail e a senha cadastrados no primeiro acesso.'
-              : 'Use seu login de rede EMS. A senha inicial é o número do seu setor.'}
-        </p>
 
         <form onSubmit={submit}>
           {firstDeveloperAccess && (
             <label><span>Nome completo</span><input name="nome" required minLength={3} autoComplete="name" /></label>
           )}
           <label>
-            <span>{developerMode ? 'E-mail' : 'Login ou e-mail EMS'}</span>
+            <span>{developerMode ? 'E-mail' : 'Login EMS'}</span>
             <input
               name="email"
               type={developerMode ? 'email' : 'text'}
               required
               autoFocus
               autoComplete="username"
-              placeholder={developerMode ? 'seuemail@dominio.com' : 't0034327 ou t0034327@ems.com.br'}
+              placeholder={developerMode ? 'seuemail@dominio.com' : 't0034327'}
             />
           </label>
-          <label><span>{developerMode ? 'Senha' : 'Senha inicial — setor'}</span><input name="senha" type="password" required minLength={8} autoComplete={firstDeveloperAccess ? 'new-password' : 'current-password'} placeholder={developerMode ? '' : 'Ex.: 18130000'} /></label>
+          <label>
+            <span>Senha</span>
+            <input
+              name="senha"
+              type="password"
+              required
+              minLength={8}
+              autoComplete={firstDeveloperAccess ? 'new-password' : 'current-password'}
+              placeholder={developerMode ? '' : 'Número do setor'}
+            />
+          </label>
           {error && <div className="login-alert">{error}</div>}
           <button className="login-primary" disabled={loading}>
             {loading
@@ -110,10 +110,6 @@ export default function LoginPage({ developerConfigured, onAuthenticated }: Prop
                 : 'Entrar no painel'}
           </button>
         </form>
-
-        <small>
-          Os acessos são atualizados pela planilha Estrutura de Pessoas. Regionais desativadas não aparecem e seus usuários não conseguem entrar.
-        </small>
       </section>
     </main>
   )
