@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { api } from './api'
 import type { Regional } from './types'
@@ -164,6 +165,7 @@ const dateLabel = (value: string) => {
 
 export default function MetaUploadLauncher({ mode, regionalId, regionalName }: Props) {
   const [open, setOpen] = useState(false)
+  const [adminTarget, setAdminTarget] = useState<HTMLElement | null>(null)
   const [regionals, setRegionals] = useState<Regional[]>([])
   const [selectedRegional, setSelectedRegional] = useState(String(regionalId || ''))
   const [competence, setCompetence] = useState(currentCompetence())
@@ -186,6 +188,28 @@ export default function MetaUploadLauncher({ mode, regionalId, regionalName }: P
   useEffect(() => {
     if (mode === 'RG' && regionalId) setSelectedRegional(String(regionalId))
   }, [mode, regionalId])
+
+  useEffect(() => {
+    if (mode !== 'RG') return undefined
+
+    const updateTarget = () => {
+      const activeButton = document.querySelector<HTMLElement>('.regional-main-nav button.active')
+      const isAdministration = normalize(activeButton?.textContent).includes('ACESSOS DOS GDS')
+        || normalize(activeButton?.textContent).includes('ADMINISTRACAO')
+      setAdminTarget(isAdministration ? document.querySelector<HTMLElement>('.content') : null)
+    }
+
+    updateTarget()
+    const navigation = document.querySelector('.regional-main-nav')
+    const observer = new MutationObserver(updateTarget)
+    if (navigation) observer.observe(navigation, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] })
+    window.addEventListener('popstate', updateTarget)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('popstate', updateTarget)
+    }
+  }, [mode])
 
   const selectedTypes = useMemo(() => files.map((file) => ({ file, type: classifyFile(file.name) })), [files])
   const duplicateType = useMemo(() => {
@@ -269,56 +293,75 @@ export default function MetaUploadLauncher({ mode, regionalId, regionalName }: P
     }
   }
 
-  return (
-    <>
-      <button className="meta-upload-launcher" type="button" onClick={() => setOpen(true)}>
+  const launcher = mode === 'RG' ? (
+    <section className="meta-upload-admin-card">
+      <div>
+        <span className="meta-upload-kicker">Administração</span>
+        <h2>Metas mensais</h2>
+        <p>Envie as planilhas de Território, Rede e Associativo da Regional.</p>
+      </div>
+      <button className="meta-upload-admin-button" type="button" onClick={() => setOpen(true)}>
         <span>↑</span> Enviar metas
       </button>
-      {open && (
-        <div className="meta-upload-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !importing) setOpen(false) }}>
-          <section className="meta-upload-modal" role="dialog" aria-modal="true" aria-label="Importar metas mensais">
-            <header>
-              <div><span className="meta-upload-kicker">Upload manual</span><h2>Metas mensais</h2><p>Envie as planilhas de Território, Rede e Associativo. O sistema vincula GR, GD e Consultores pelo setor.</p></div>
-              <button type="button" onClick={() => setOpen(false)} disabled={importing} aria-label="Fechar">×</button>
-            </header>
+    </section>
+  ) : (
+    <button className="meta-upload-launcher" type="button" onClick={() => setOpen(true)}>
+      <span>↑</span> Enviar metas
+    </button>
+  )
 
-            {error && <div className="meta-upload-alert error">{error}</div>}
-            {message && <div className="meta-upload-alert success">{message}</div>}
+  const modal = open ? createPortal(
+    <div className="meta-upload-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !importing) setOpen(false) }}>
+      <section className="meta-upload-modal" role="dialog" aria-modal="true" aria-label="Importar metas mensais">
+        <header>
+          <div><span className="meta-upload-kicker">Upload manual</span><h2>Metas mensais</h2><p>Envie as planilhas de Território, Rede e Associativo. O sistema vincula GR, GD e Consultores pelo setor.</p></div>
+          <button type="button" onClick={() => setOpen(false)} disabled={importing} aria-label="Fechar">×</button>
+        </header>
 
-            <form onSubmit={submit}>
-              <div className="meta-upload-fields">
-                <label><span>Regional</span>{mode === 'DESENVOLVEDOR' ? (
-                  <select value={selectedRegional} onChange={(event) => setSelectedRegional(event.target.value)} required>
-                    <option value="">Selecione uma Regional</option>
-                    {regionals.map((regional) => <option value={regional.id} key={regional.id}>{regional.nome} · Setor {regional.setor || '—'}</option>)}
-                  </select>
-                ) : <input value={regionalName || 'Minha Regional'} readOnly />}</label>
-                <label><span>Mês das metas</span><input type="month" value={competence} onChange={(event) => setCompetence(event.target.value)} required /></label>
-              </div>
+        {error && <div className="meta-upload-alert error">{error}</div>}
+        {message && <div className="meta-upload-alert success">{message}</div>}
 
-              <label className="meta-upload-drop">
-                <input key={inputKey} type="file" accept=".xlsx,.xls" multiple onChange={chooseFiles} disabled={importing} />
-                <strong>Selecionar planilhas</strong>
-                <span>Você pode enviar os três arquivos de uma vez.</span>
-              </label>
+        <form onSubmit={submit}>
+          <div className="meta-upload-fields">
+            <label><span>Regional</span>{mode === 'DESENVOLVEDOR' ? (
+              <select value={selectedRegional} onChange={(event) => setSelectedRegional(event.target.value)} required>
+                <option value="">Selecione uma Regional</option>
+                {regionals.map((regional) => <option value={regional.id} key={regional.id}>{regional.nome} · Setor {regional.setor || '—'}</option>)}
+              </select>
+            ) : <input value={regionalName || 'Minha Regional'} readOnly />}</label>
+            <label><span>Mês das metas</span><input type="month" value={competence} onChange={(event) => setCompetence(event.target.value)} required /></label>
+          </div>
 
-              {!!selectedTypes.length && <div className="meta-upload-files">{selectedTypes.map(({ file, type }) => (
-                <article key={`${file.name}-${file.lastModified}`}><div><strong>{file.name}</strong><span>{Math.max(file.size / 1024, 1).toFixed(0)} KB</span></div><b className={type ? 'recognized' : 'unknown'}>{type || 'Não identificado'}</b></article>
-              ))}</div>}
+          <label className="meta-upload-drop">
+            <input key={inputKey} type="file" accept=".xlsx,.xls" multiple onChange={chooseFiles} disabled={importing} />
+            <strong>Selecionar planilhas</strong>
+            <span>Você pode enviar os três arquivos de uma vez.</span>
+          </label>
 
-              <div className="meta-upload-rules"><span>✓ Cabeçalhos podem estar até a linha 31</span><span>✓ O arquivo completo pode conter outras Regionais</span><span>✓ Um novo upload substitui o mesmo tipo e mês</span></div>
-              {progress && <div className="meta-upload-progress">{progress}</div>}
-              <button className="meta-upload-submit" type="submit" disabled={importing}>{importing ? 'Importando…' : 'Importar metas'}</button>
-            </form>
+          {!!selectedTypes.length && <div className="meta-upload-files">{selectedTypes.map(({ file, type }) => (
+            <article key={`${file.name}-${file.lastModified}`}><div><strong>{file.name}</strong><span>{Math.max(file.size / 1024, 1).toFixed(0)} KB</span></div><b className={type ? 'recognized' : 'unknown'}>{type || 'Não identificado'}</b></article>
+          ))}</div>}
 
-            <section className="meta-upload-history">
-              <div><h3>Últimos uploads</h3><button type="button" onClick={() => void loadHistory()} disabled={loadingHistory || !selectedRegional}>{loadingHistory ? 'Atualizando…' : 'Atualizar'}</button></div>
-              {history.map((item) => <article key={item.id}><div><strong>{item.tipo_carteira} · {item.competencia}</strong><span>{item.arquivo_origem}</span></div><div><b>{item.total_importado} importadas</b><span>{dateLabel(item.criado_em)}</span></div></article>)}
-              {!history.length && <p>{selectedRegional ? 'Nenhum upload registrado para esta Regional.' : 'Selecione uma Regional para ver o histórico.'}</p>}
-            </section>
-          </section>
-        </div>
-      )}
+          <div className="meta-upload-rules"><span>✓ Cabeçalhos podem estar até a linha 31</span><span>✓ O arquivo completo pode conter outras Regionais</span><span>✓ Um novo upload substitui o mesmo tipo e mês</span></div>
+          {progress && <div className="meta-upload-progress">{progress}</div>}
+          <button className="meta-upload-submit" type="submit" disabled={importing}>{importing ? 'Importando…' : 'Importar metas'}</button>
+        </form>
+
+        <section className="meta-upload-history">
+          <div><h3>Últimos uploads</h3><button type="button" onClick={() => void loadHistory()} disabled={loadingHistory || !selectedRegional}>{loadingHistory ? 'Atualizando…' : 'Atualizar'}</button></div>
+          {history.map((item) => <article key={item.id}><div><strong>{item.tipo_carteira} · {item.competencia}</strong><span>{item.arquivo_origem}</span></div><div><b>{item.total_importado} importadas</b><span>{dateLabel(item.criado_em)}</span></div></article>)}
+          {!history.length && <p>{selectedRegional ? 'Nenhum upload registrado para esta Regional.' : 'Selecione uma Regional para ver o histórico.'}</p>}
+        </section>
+      </section>
+    </div>,
+    document.body,
+  ) : null
+
+  return (
+    <>
+      {mode === 'DESENVOLVEDOR' && launcher}
+      {mode === 'RG' && adminTarget && createPortal(launcher, adminTarget)}
+      {modal}
     </>
   )
 }
