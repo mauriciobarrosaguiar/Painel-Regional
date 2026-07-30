@@ -4,6 +4,7 @@ import ClientBaseImport from './ClientBaseImport'
 import DeveloperPanel from './DeveloperPanel'
 import LoginPage from './LoginPage'
 import MetaUploadLauncher from './MetaUploadLauncher'
+import ProductBasesUpload from './ProductBasesUpload'
 import Workspace from './Workspace'
 import type { Regional, SessionUser } from './types'
 
@@ -51,12 +52,17 @@ export default function App() {
   if (!user) return <LoginPage developerConfigured={developerConfigured} onAuthenticated={authenticated} />
 
   if (user.perfil === 'DESENVOLVEDOR') {
-    return <><DeveloperPanel user={user} onLogout={logout} /><MetaUploadLauncher mode="DESENVOLVEDOR" /><ClientBaseImport /></>
+    return <><DeveloperPanel user={user} onLogout={logout} /><MetaUploadLauncher mode="DESENVOLVEDOR" /><ProductBasesUpload mode="DESENVOLVEDOR" /><ClientBaseImport /></>
   }
 
   if (!regional) {
     return <div className="center-screen"><h2>Regional não encontrada</h2><p>{error || 'Este acesso ainda não está vinculado a uma Regional.'}</p><button className="primary-button" onClick={() => void logout()}>Voltar ao login</button></div>
   }
 
-  return <><Workspace user={user} regional={regional} onLogout={logout} />{user.perfil === 'RG' && <MetaUploadLauncher mode="RG" regionalId={regional.id} regionalName={regional.nome} />}</>
+  return <>
+    <Workspace user={user} regional={regional} onLogout={logout} />
+    {user.perfil === 'RG' && <MetaUploadLauncher mode="RG" regionalId={regional.id} regionalName={regional.nome} />}
+    {user.perfil === 'RG' && <ProductBasesUpload mode="RG" regionalId={regional.id} regionalName={regional.nome} />}
+    {user.perfil === 'GD' && <ProductBasesUpload mode="GD" regionalId={regional.id} regionalName={regional.nome} districtId={user.distrital_id} />}
+  </>
 }
