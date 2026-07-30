@@ -3,7 +3,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
 })
 
-const TYPES = ['BUSSOLA', 'MERCADO_FARMA', 'SHAREPOINT']
+const TYPES = ['BUSSOLA', 'MERCADO_FARMA']
 
 export async function onRequestPost({ request, env }) {
   const provided = request.headers.get('x-admin-key') || ''

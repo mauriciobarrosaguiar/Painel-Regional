@@ -1,7 +1,7 @@
 import { badRequest, json, readBody } from '../_lib/security.js'
 import { requireManager } from '../_lib/manager.js'
 
-const TYPES = ['BUSSOLA', 'MERCADO_FARMA', 'SHAREPOINT']
+const TYPES = ['BUSSOLA', 'MERCADO_FARMA']
 
 function commandStatement(env, user, type, districtId, parameters, now) {
   return env.DB.prepare(`
@@ -15,9 +15,7 @@ function commandStatement(env, user, type, districtId, parameters, now) {
     type,
     JSON.stringify(parameters),
     user.email,
-    type === 'SHAREPOINT'
-      ? 'Importação das metas mensais do SharePoint registrada.'
-      : 'Extração registrada para usar a credencial desta Distrital.',
+    'Extração registrada para usar a credencial desta Distrital.',
     now,
     now,
   )
@@ -31,33 +29,7 @@ export async function onRequestPost({ request, env }) {
   const type = String(data.tipo || '').trim().toUpperCase()
   if (!TYPES.includes(type)) return badRequest('Tipo de automação inválido.')
 
-  if (type === 'SHAREPOINT') {
-    if (user.perfil !== 'RG') return badRequest('A importação das metas do SharePoint é disparada pelo Gerente Regional.')
-    const existing = await env.DB.prepare(`
-      SELECT id FROM comandos_automacao
-       WHERE regional_id = ? AND tipo = 'SHAREPOINT' AND status IN ('aguardando', 'executando')
-       LIMIT 1
-    `).bind(user.regional_id).first()
-    if (existing) return json({ erro: 'A importação do SharePoint já está aguardando ou em execução.' }, 409)
-
-    const now = new Date().toISOString()
-    await commandStatement(env, user, type, null, {
-      regional_id: Number(user.regional_id),
-      competencia: String(data.competencia || ''),
-      ano: Number(data.ano || 0) || undefined,
-      mes: Number(data.mes || 0) || undefined,
-    }, now).run()
-    return json({
-      sucesso: true,
-      status: 'aguardando',
-      quantidade: 1,
-      mensagem: 'Importação das metas do SharePoint registrada na fila.',
-    }, 202)
-  }
-
   const districtFilter = user.perfil === 'GD' ? ' AND d.id = ?' : ''
-  const params = [user.regional_id, type]
-  if (user.perfil === 'GD') params.push(user.distrital_id)
   const configured = await env.DB.prepare(`
     SELECT d.id, d.nome, d.codigo
       FROM distritais d
