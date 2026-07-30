@@ -29,24 +29,34 @@ export async function onRequestPost({ request, env }) {
   let data = {}
   try { data = await request.json() } catch { /* corpo vazio */ }
   const regionalId = Number(data.regional_id || 0)
+  const districtId = Number(data.distrital_id || 0)
   const type = String(data.tipo || '').trim().toUpperCase()
-  if (!regionalId || !['BUSSOLA', 'MERCADO_FARMA'].includes(type)) {
-    return json({ erro: 'Regional e integração são obrigatórias.' }, 400)
+  if (!regionalId || !districtId || !['BUSSOLA', 'MERCADO_FARMA'].includes(type)) {
+    return json({ erro: 'Regional, Distrital e integração são obrigatórias.' }, 400)
   }
+
+  const district = await env.DB.prepare(`
+    SELECT id, nome, codigo
+      FROM distritais
+     WHERE id = ? AND regional_id = ? AND ativo = 1
+  `).bind(districtId, regionalId).first()
+  if (!district) return json({ erro: 'Distrital inválida para esta Regional.' }, 404)
 
   const current = await env.DB.prepare(`
     SELECT credencial_cifrada
-      FROM credenciais_integracoes
-     WHERE regional_id = ? AND status = 'CONFIGURADA'
-     ORDER BY CASE WHEN tipo = ? THEN 0 ELSE 1 END, atualizado_em DESC
+      FROM credenciais_distritais
+     WHERE regional_id = ? AND distrital_id = ? AND tipo = ? AND status = 'CONFIGURADA'
      LIMIT 1
-  `).bind(regionalId, type).first()
-  if (!current) return json({ erro: 'Credencial única não configurada para esta Regional.' }, 404)
+  `).bind(regionalId, districtId, type).first()
+  if (!current) return json({ erro: 'Credencial não configurada para esta Distrital.' }, 404)
 
   try {
     const credential = await decryptCredentials(current.credencial_cifrada, env.PAINEL_REGIONAL_KEY)
     return json({
       regional_id: regionalId,
+      distrital_id: districtId,
+      distrital_nome: district.nome,
+      distrital_codigo: district.codigo,
       tipo: type,
       usuario: credential.usuario,
       senha: credential.segredo,
