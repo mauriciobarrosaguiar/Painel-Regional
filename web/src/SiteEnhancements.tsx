@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from './api'
+import { readRegionalNavigation } from './regionalNavigation'
+import RegionalDownloadImagesButton from './RegionalDownloadImagesButton'
 import type { SessionUser } from './types'
 import './site-enhancements.css'
 
@@ -41,6 +43,8 @@ export default function SiteEnhancements({ user }: Props) {
   const [footerTarget, setFooterTarget] = useState<HTMLElement | null>(null)
   const [greetingTarget, setGreetingTarget] = useState<HTMLElement | null>(null)
   const [credentialTarget, setCredentialTarget] = useState<HTMLElement | null>(null)
+  const [reportTarget, setReportTarget] = useState<HTMLElement | null>(null)
+  const [reportQuery, setReportQuery] = useState('')
   const [credential, setCredential] = useState<CredentialItem | null>(null)
   const [editing, setEditing] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -96,6 +100,30 @@ export default function SiteEnhancements({ user }: Props) {
         nextCredentialTarget.classList.add('secure-credential-host')
       }
       setCredentialTarget(nextCredentialTarget)
+
+      const overviewActive = activeNavigation === 'VISAO REGIONAL' || activeNavigation === 'VISAO GERAL'
+      const nextReportTarget = overviewActive && user && user.perfil !== 'DESENVOLVEDOR'
+        ? document.querySelector<HTMLElement>('.content > .hero')
+        : null
+      const previousReport = document.querySelector<HTMLElement>('.hero.regional-report-host')
+      if (previousReport && previousReport !== nextReportTarget) previousReport.classList.remove('regional-report-host')
+      if (nextReportTarget && !nextReportTarget.classList.contains('regional-report-host')) {
+        nextReportTarget.classList.add('regional-report-host')
+      }
+      setReportTarget(nextReportTarget)
+
+      const params = new URLSearchParams()
+      const navigation = readRegionalNavigation()
+      if (user?.perfil === 'RG' && activeNavigation === 'VISAO GERAL' && navigation.distritalId) {
+        params.set('distrital_id', String(navigation.distritalId))
+      }
+      if ((user?.perfil === 'GD' || user?.perfil === 'CONSULTOR') && user.distrital_id) {
+        params.set('distrital_id', String(user.distrital_id))
+      }
+      if (user?.perfil === 'CONSULTOR' && user.consultor_id) {
+        params.set('consultor_id', String(user.consultor_id))
+      }
+      setReportQuery(params.toString())
     }
 
     updateTargets()
@@ -114,8 +142,9 @@ export default function SiteEnhancements({ user }: Props) {
       document.querySelector<HTMLElement>('.mba-credit-host')?.classList.remove('mba-credit-host')
       restoreGreeting(document.querySelector<HTMLElement>('.personalized-greeting-host'))
       document.querySelector<HTMLElement>('.integration-forms.secure-credential-host')?.classList.remove('secure-credential-host')
+      document.querySelector<HTMLElement>('.hero.regional-report-host')?.classList.remove('regional-report-host')
     }
-  }, [user?.perfil])
+  }, [user])
 
   const loadCredential = useCallback(async () => {
     if (user?.perfil !== 'GD') return
@@ -243,6 +272,13 @@ export default function SiteEnhancements({ user }: Props) {
     credentialTarget,
   ) : null
 
+  const reportView = reportTarget ? createPortal(
+    <div className="regional-report-actions">
+      <RegionalDownloadImagesButton query={reportQuery} />
+    </div>,
+    reportTarget,
+  ) : null
+
   return (
     <>
       {footerTarget && (footerTarget.matches('.app-shell > footer')
@@ -250,6 +286,7 @@ export default function SiteEnhancements({ user }: Props) {
         : createPortal(<footer className="mba-credit-footer">{credit}</footer>, footerTarget))}
       {greetingView}
       {credentialView}
+      {reportView}
     </>
   )
 }
