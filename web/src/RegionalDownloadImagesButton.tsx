@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { downloadReportImages } from './download-report-images'
+import './regional-download-images.css'
 
 type Props = {
   query: string
